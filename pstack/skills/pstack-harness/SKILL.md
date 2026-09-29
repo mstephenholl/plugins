@@ -38,11 +38,12 @@ Most pstack skills are user-only, so they are hidden from you and the `Skill` to
 |---|---|---|
 | `Task` subagent | `Agent` | `spawn_agent` (`task_name`, `message`, `model`, `reasoning_effort`), then `wait_agent` |
 | `subagent_type: generalPurpose` | `general-purpose`, or `pstack-effort-<effort>` when the role's entry has an effort | The default agent type |
-| `readonly: true` | `Explore` with no effort. With an effort, `pstack-effort-<effort>` told "read-only, do not edit files". | Say "read-only, do not edit files" in the message |
-| `run_in_background: true` | Agents already run in the background and notify you when done | `spawn_agent` returns at once. Collect with `wait_agent`. |
+| `readonly: true` | `pstack-effort-<effort>` told "read-only, do not edit files", since `Explore` cannot carry an effort. Use `Explore` only when the role's entry has no effort. | Say "read-only, do not edit files" in the message |
+| `run_in_background: true` | Agents already run in the background and notify you when done. In a headless run (`claude -p`) the session ends with your turn, so never end a turn while an agent or background command is still running. | `spawn_agent` returns at once. Collect with `wait_agent`. |
 | `model` | `model`: `opus`, `sonnet`, `haiku`, or `fable`. The entry's effort picks the `pstack-effort-<effort>` agent type, which `port/install.sh` generates from the models file. | `model` and `reasoning_effort` |
 | `environment: "cloud"`, `cloud_base_branch` | No cloud workers. Run locally. A writer gets its own worktree (`isolation: "worktree"`). | No cloud workers. Run locally. Create a git worktree per writer and name it in the message. |
 | `AskQuestion` | `AskUserQuestion` | `request_user_input` when available, else ask in plain text |
+| An approval gate with no human present (`claude -p`, `codex exec`) | Put the pending choices in the final message and stop. Take no gated or "automatic" outside action, such as filing to a tracker. | Same |
 | todolist | Your task or todo tool | `update_plan` |
 | `/loop` | The `loop` skill (`/loop 30m <tick prompt>`), or `Monitor` for an event | See the tick rule under Long runs |
 | MCP discovery (the `mcps/` directory) | MCP tools are named `mcp__<server>__<tool>`. Search deferred tools too. | `codex mcp list`, plus the MCP tools in your tool list |
@@ -61,7 +62,7 @@ Skill text names Cursor slugs (`grok-4.7-xhigh-fast`, `gpt-5.6-sol-max`, `claude
 An entry is `<harness>:<model>[@<effort>]`, where harness is `claude` or `codex`, or `inherit-parent` (also written `auto`), which means a native subagent on your own model. An entry is native when its harness is yours and foreign otherwise.
 
 - Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) get one seat per entry.
-- `arena cross-judge pool` and `reflect tooling` get one seat. Prefer a foreign entry, since that is a different model family from yours.
+- `arena cross-judge pool` and `reflect tooling` get one seat. Prefer a foreign entry, since that is a different model family from yours. For `reflect tooling`, stay native when the transcript's lookups need MCP servers only your harness has configured.
 - Every other role takes the first native entry. With no native entry, it takes the first entry and runs it foreign.
 
 Run a native entry as a subagent with its model and effort, as the Tools table says. Run a foreign entry through the other harness's CLI, below.
@@ -76,7 +77,7 @@ If a model is rejected, use that role's default for the same harness and say so.
 
 ## Foreign seats
 
-A foreign seat cannot see your conversation. Write its full prompt to a file that stands alone (task, paths, rubric, output shape), run the CLI in the background, and read its final message from the output file. Run it in the seat's own worktree when it writes files, otherwise in the repo root. Omit the effort flag when the entry has none.
+A foreign seat cannot see your conversation. Write its full prompt to a file that stands alone (task, paths, rubric, output shape), run the CLI in the background, and read its final message from the output file. Wait for every seat before you synthesize. In a headless run (`claude -p`, `codex exec`) the session ends with your turn, so stay in the turn until each seat's command exits. Run it in the seat's own worktree when it writes files, otherwise in the repo root. Omit the effort flag when the entry has none.
 
 From Claude Code, a `codex:` seat:
 
@@ -96,7 +97,9 @@ cd <dir> && claude -p --model <model> --effort <effort> \
 
 A seat that writes files uses `--permission-mode auto` in place of `--disallowedTools`.
 
-Each CLI needs network access and its own home directory. Codex's sandbox blocks both, so request escalation for the `claude` command. If Claude Code's Bash sandbox is on, run `codex` outside it.
+Each CLI needs network access and its own login. Inside Codex's sandbox, `claude` answers "Not logged in". So in Codex, run the `claude` command with `sandbox_permissions: "require_escalated"` and a `justification` naming the seat, from the first attempt. If Claude Code's Bash sandbox is on, run `codex` with the sandbox disabled for that call.
+
+Never work around a seat's login. Do not read keychain entries, copy or point at another config directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), or edit `~/.claude.json` or `~/.codex/auth.json`. If escalation is denied, report that seat as BLOCKED with the reason and finish with the seats that ran.
 
 ## Transcripts
 
@@ -104,7 +107,7 @@ Wherever a skill reads the active workspace's `agent-transcripts/` directory, us
 
 - `transcripts.py current` prints this session's transcript path. Use it in place of guessing the newest file or checking a first line.
 - `transcripts.py list [--cwd DIR] [--days N] [--harness claude|codex] [--subagents]` lists sessions from both harnesses whose working directory is DIR (default: the current one) or below it, newest first by real modification time. It prints TSV: modified, harness, session id, path, title. It leaves out subagent threads unless you pass `--subagents`. `--days` defaults to 7.
-- `transcripts.py dump <path> [--no-tools] [--max-chars N]` turns a transcript into one readable line per user message, assistant message, tool call, and tool result. A raw log is mostly bookkeeping, so dump before reading or grepping. `--no-tools` keeps only the conversation. When a skill hands a transcript to a subagent, write the dump to a file (`transcripts.py dump <path> > /tmp/pstack-transcript-<id>.txt`) and pass that path.
+- `transcripts.py dump <path> [--no-tools] [--max-chars N]` turns a transcript into one readable line per user message, assistant message, tool call, and tool result. A raw log is mostly bookkeeping, so dump before reading or grepping. `--no-tools` keeps only the conversation. When a skill hands a transcript to a subagent, write the dump to a file with a high limit (`transcripts.py dump <path> --max-chars 20000 > /tmp/pstack-transcript-<id>.txt`) and pass that path. User turns are never cut. A `[...N more chars]` marker means the entry was cut, so read the file it names from disk before judging it.
 
 Raw logs live at `~/.claude/projects/<slug>/<session-id>.jsonl` (Claude Code) and `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (Codex). Stay inside the active project's transcripts, as the Cursor rule says. `list` does that by default.
 

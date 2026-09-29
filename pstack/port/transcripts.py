@@ -7,7 +7,8 @@
       Sessions whose working directory is DIR or below it, newest first, as TSV:
       modified, harness, session id, path, title.
   transcripts.py dump PATH [--no-tools] [--max-chars N]
-      One readable line per message, tool call, and tool result.
+      One readable line per message, tool call, and tool result. Entries other
+      than user turns are cut at N characters (default 2000, 0 for no limit).
 """
 
 import argparse
@@ -161,7 +162,9 @@ def cmd_list(args):
 
 def clip(text, limit):
     text = text.strip()
-    return text if len(text) <= limit else text[:limit] + f" [...{len(text) - limit} more chars]"
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[:limit] + f" [...{len(text) - limit} more chars]"
 
 
 def text_of(content):
@@ -259,7 +262,8 @@ def cmd_dump(args):
                     continue
                 text = SYSTEM_REMINDER.sub("", text)
                 if text.strip():
-                    print(f"[{ts}] {label}: {clip(text, args.max_chars)}")
+                    limit = 0 if label == "USER" else args.max_chars
+                    print(f"[{ts}] {label}: {clip(text, limit)}")
     if entries is None:
         fail(f"unrecognized transcript format: {args.path}")
 
