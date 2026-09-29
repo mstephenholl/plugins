@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Figure it out
 
-Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md` in full. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
 
 When the task matches no playbook, design one. The deliverable before any code is the workflow itself: a sequence of phases that scales rigor to the task, runs the scientific method, and leaves a decision trail a human can audit after stepping away.
 

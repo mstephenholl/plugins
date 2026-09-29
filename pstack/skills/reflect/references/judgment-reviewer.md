@@ -19,8 +19,9 @@ Scan for:
 
 Findings must point to skills, tools, or MCPs invoked in this transcript. Speculative routings to skills the parent never opened do not count. To check whether a skill was used, scan the transcript for:
 
-- `Read` tool calls against any `SKILL.md` file (workspace `.cursor/skills/`, user-level `~/.cursor/skills/`, or plugin-installed paths under `~/.cursor/plugins/`)
-- `Task` prompts that name a skill path
+- `Read` tool calls, or `cat` and `sed` commands, against any `SKILL.md` file (workspace `.cursor/skills/`, `.claude/skills/`, or `.agents/skills/`, user-level `~/.cursor/skills/`, `~/.claude/skills/`, `~/.codex/skills/`, `~/.agents/skills/`, or `~/.agents/pstack/skills/`, or plugin-installed paths under `~/.cursor/plugins/` or `~/.claude/plugins/`)
+- `Task`, `Agent`, or `spawn_agent` prompts that name a skill path
+- `Skill` tool calls, `/<skill>` commands in user turns, or `$<skill>` mentions in Codex user turns
 - Tool calls (Shell, Grep, MCP, etc.) that match a skill's documented commands
 
 Two valid finding shapes:

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Interrogate
 
-Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md` in full. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
 
 Spawn one reviewer per configured model to adversarially review code changes. Each model gets the same prompt and rubric. The adversarial signal comes from model diversity, not assigned personas.
 

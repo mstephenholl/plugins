@@ -11,15 +11,20 @@ set -euo pipefail
 SKILLS=(
   architect
   arena
+  automate-me
   blast-radius
   bro
+  create-verification-skill
   figure-it-out
   how
   interrogate
+  maintain-verification-skill
   no-comments
   poteto-mode
   pstack-tdd
   pstack-teach
+  recall
+  reflect
   setup-pstack
   show-me-your-work
   swarm

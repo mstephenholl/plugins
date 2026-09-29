@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Recall
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md` in full. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex. Read and list transcripts with `~/.agents/pstack/port/transcripts.py` (`current`, `list`, `dump`), which covers both harnesses.
+
 **Before you start or resume work, you rebuild the user's recent working context and hand back a tight capsule of where things stand now and what to do next.**
 
 Keep it tight and on-topic. Read only what the in-scope threads need, then stop.

@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Reflect
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md` in full. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex. Read and list transcripts with `~/.agents/pstack/port/transcripts.py` (`current`, `list`, `dump`), which covers both harnesses.
+
 Mine the current conversation for durable learnings, then route them into skill edits.
 
 ## When to invoke

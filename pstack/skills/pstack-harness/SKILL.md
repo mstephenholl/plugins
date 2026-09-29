@@ -15,6 +15,9 @@ You are in Claude Code if your tools include `Agent`. You are in Codex if your t
 - pstack lives at `~/.agents/pstack`. Skills are `~/.agents/pstack/skills/<name>/SKILL.md`. Agent definitions are in `~/.agents/pstack/agents/`.
 - Model config is `~/.agents/pstack-models.md`. Read it wherever a skill says `~/.cursor/rules/pstack-models.mdc` or "the `pstack-models.mdc` rule".
 - A skill that writes a project-local skill to `.cursor/skills/<name>/` writes it to `.agents/skills/<name>/` instead, with `.claude/skills/<name>` symlinked to it so both harnesses find it.
+- A personal skill that would go in `~/.cursor/skills/<name>/` goes in `~/.agents/skills/<name>/`, with `~/.claude/skills/<name>` symlinked to it. Codex reads `~/.agents/skills` directly. It lives outside any repo, so it gets no worktree or PR. Tell the user its path.
+- To find existing skills where a skill searches `.cursor/skills/` or `~/.cursor/skills/`, search `.agents/skills/`, `.claude/skills/`, `~/.agents/skills/`, `~/.claude/skills/`, and `~/.codex/skills/`, following symlinks.
+- A skill you write with `disable-model-invocation: true` also needs `agents/openai.yaml` containing `policy:` and `  allow_implicit_invocation: false`. Codex ignores the frontmatter flag.
 
 ## Running another pstack skill
 
@@ -58,7 +61,7 @@ Skill text names Cursor slugs (`grok-4.7-xhigh-fast`, `gpt-5.6-sol-max`, `claude
 An entry is `<harness>:<model>[@<effort>]`, where harness is `claude` or `codex`, or `inherit-parent` (also written `auto`), which means a native subagent on your own model. An entry is native when its harness is yours and foreign otherwise.
 
 - Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) get one seat per entry.
-- `arena cross-judge pool` gets one seat. Prefer a foreign entry, since that is a different model family from yours.
+- `arena cross-judge pool` and `reflect tooling` get one seat. Prefer a foreign entry, since that is a different model family from yours.
 - Every other role takes the first native entry. With no native entry, it takes the first entry and runs it foreign.
 
 Run a native entry as a subagent with its model and effort, as the Tools table says. Run a foreign entry through the other harness's CLI, below.
@@ -97,12 +100,13 @@ Each CLI needs network access and its own home directory. Codex's sandbox blocks
 
 ## Transcripts
 
-Wherever a skill reads the active workspace's `agent-transcripts/` directory:
+Wherever a skill reads the active workspace's `agent-transcripts/` directory, use `~/.agents/pstack/port/transcripts.py`. It reads both harnesses' session logs:
 
-- Claude Code: `~/.claude/projects/<slug>/<session-id>.jsonl`, where `<slug>` is the working directory with every `/` and `.` replaced by `-`. Subagent transcripts are in `<session-id>/subagents/agent-*.jsonl`. The newest file is usually this session. Confirm by searching it for a phrase from this conversation.
-- Codex: sessions since August 2026 are in `~/.codex/thread_history_1.sqlite`, not JSONL. Older ones are `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. If you cannot read this session's transcript, skip the transcript check and say so.
+- `transcripts.py current` prints this session's transcript path. Use it in place of guessing the newest file or checking a first line.
+- `transcripts.py list [--cwd DIR] [--days N] [--harness claude|codex] [--subagents]` lists sessions from both harnesses whose working directory is DIR (default: the current one) or below it, newest first by real modification time. It prints TSV: modified, harness, session id, path, title. It leaves out subagent threads unless you pass `--subagents`. `--days` defaults to 7.
+- `transcripts.py dump <path> [--no-tools] [--max-chars N]` turns a transcript into one readable line per user message, assistant message, tool call, and tool result. A raw log is mostly bookkeeping, so dump before reading or grepping. `--no-tools` keeps only the conversation. When a skill hands a transcript to a subagent, write the dump to a file (`transcripts.py dump <path> > /tmp/pstack-transcript-<id>.txt`) and pass that path.
 
-Stay inside the active project's transcripts, as the Cursor rule says.
+Raw logs live at `~/.claude/projects/<slug>/<session-id>.jsonl` (Claude Code) and `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (Codex). Stay inside the active project's transcripts, as the Cursor rule says. `list` does that by default.
 
 ## Long runs
 

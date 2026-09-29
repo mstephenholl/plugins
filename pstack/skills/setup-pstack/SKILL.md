@@ -73,3 +73,7 @@ Run `~/.agents/pstack/port/install.sh`. It generates a `pstack-effort-<effort>` 
 ### 7. Confirm
 
 Tell the user the file was written. Skills read it each time they run, so it applies from the next skill run in either harness. Re-running this skill updates it.
+
+### 8. Offer a verification skill (optional)
+
+Check whether the project has a way to drive the real app for proof (a `verify-*` skill, or an existing harness). If not, offer once: "want a project-local verification skill, so agents can drive the app the way a user does and prove changes work? I can generate one with /create-verification-skill." On yes, read `~/.agents/pstack/skills/create-verification-skill/SKILL.md` and follow it. On no, move on without pushing.
