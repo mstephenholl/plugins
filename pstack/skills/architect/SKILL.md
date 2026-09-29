@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Architect
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+
 Design before implementing. Sketch types, function signatures, class shapes, and module boundaries with `not implemented` bodies and pseudocode. Synthesize across multiple model perspectives, then fill in code against the chosen sketch. If implementation proves the sketch wrong, throw it out and redesign.
 
 ## Start

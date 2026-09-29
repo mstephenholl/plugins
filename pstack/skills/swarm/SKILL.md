@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Swarm
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+
 Fan out N parallel cloud workers. They may cover separate slices, race the same brief, or mix both. The parent waits, aggregates, and returns one report.
 
 ## Start

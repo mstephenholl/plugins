@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Arena
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+
 Fan out N parallel attempts at the same task. Read every candidate end to end. Pick the strongest as the base. Graft the best ideas from the others into it. Verify the synthesized result.
 
 ## Start

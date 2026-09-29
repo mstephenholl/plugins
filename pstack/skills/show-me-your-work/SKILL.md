@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Show me your work
 
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
+
 Keep one canonical log.
 
 ## The format

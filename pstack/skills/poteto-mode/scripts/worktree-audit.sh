@@ -22,9 +22,15 @@ prs=$(mktemp)
 gh pr list --author "@me" --state all --limit 1000 \
 	--json number,state,headRefName 2>/dev/null > "$prs" || echo "[]" > "$prs"
 
-# Transcripts dir: ~/.cursor/projects/<slugified-repo-path>/agent-transcripts.
+# Transcripts: Cursor's per-repo dir, plus Claude Code and Codex session logs
+# touched recently enough to count as a recent chat. Claude Code keys its dirs
+# by the session's cwd, which may be any worktree, so search them all.
 slug=$(printf '%s' "$main_wt" | sed 's#^/##; s#/#-#g')
-transcripts="$HOME/.cursor/projects/$slug/agent-transcripts"
+transcripts=$(mktemp)
+{
+	find "$HOME/.cursor/projects/$slug/agent-transcripts" -type f 2>/dev/null
+	find "$HOME/.claude/projects" "$HOME/.codex/sessions" -name '*.jsonl' -mtime -5 2>/dev/null
+} > "$transcripts"
 now=$(date +%s)
 
 printf "SIZE\tAGE\tMERGED\tDIRTY\tREMOTE\tPR\tLAST_CHAT\tBUCKET\tWORKTREE\n"
@@ -63,9 +69,10 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt;
 	# Most recent chat whose transcript operated in this worktree. Match path
 	# followed by "/" or a quote so glint-482 does not match glint-482-r37.
 	last="-"; last_ts=0
-	if [ -d "$transcripts" ]; then
-		f=$(rg -l -e "${wt}/" -e "${wt}\"" "$transcripts" 2>/dev/null \
-			| xargs stat -f '%m %N' 2>/dev/null | sort -rn | head -1)
+	if [ -s "$transcripts" ]; then
+		f=$(tr '\n' '\0' < "$transcripts" \
+			| xargs -0 rg -l -0 -e "${wt}/" -e "${wt}\"" 2>/dev/null \
+			| xargs -0 stat -f '%m %N' 2>/dev/null | sort -rn | head -1)
 		if [ -n "$f" ]; then last_ts=$(echo "$f" | awk '{print $1}')
 			last=$(date -r "$last_ts" '+%Y-%m-%d' 2>/dev/null); fi
 	fi
@@ -83,4 +90,4 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt;
 		"$size" "$age" "$merged" "$dirty" "$remote" "$pr" "$last" "$bucket" "$wt"
 done | sort -t$'\t' -k1,1 -rh
 
-rm -f "$prs"
+rm -f "$prs" "$transcripts"

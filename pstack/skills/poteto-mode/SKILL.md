@@ -1,5 +1,5 @@
 ---
-name: Poteto Mode
+name: poteto-mode
 description: poteto's agent style for concise, detailed responses, deliberate subagents, unslopped prose, simple code, and verified work. Use for poteto, /poteto-mode, or requests to work in this style.
 disable-model-invocation: true
 mode: true
@@ -9,6 +9,8 @@ reminder: New task? Playbook match or rigor needed -> apply /poteto-mode. Casual
 ---
 
 # Poteto mode
+
+Outside Cursor, first read `~/.agents/pstack/skills/pstack-harness/SKILL.md`. It maps the Cursor tools, model slugs, and paths below to Claude Code and Codex.
 
 ## Non-negotiables
 
