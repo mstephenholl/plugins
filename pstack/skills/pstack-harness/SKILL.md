@@ -33,22 +33,22 @@ Most pstack skills are user-only, so they are hidden from you and the `Skill` to
 
 | Cursor | Claude Code | Codex |
 |---|---|---|
-| `Task` subagent | `Agent` | `spawn_agent`, then `wait_agent`. `close_agent` when done. |
-| `subagent_type: generalPurpose` | `general-purpose` | The default agent type |
-| `readonly: true` | `Explore`, or tell a `general-purpose` agent not to edit | Say "read-only, do not edit files" in the message |
+| `Task` subagent | `Agent` | `spawn_agent` (`task_name`, `message`, `model`, `reasoning_effort`), then `wait_agent` |
+| `subagent_type: generalPurpose` | `general-purpose`, or `pstack-effort-<effort>` when the role's entry has an effort | The default agent type |
+| `readonly: true` | `Explore` with no effort. With an effort, `pstack-effort-<effort>` told "read-only, do not edit files". | Say "read-only, do not edit files" in the message |
 | `run_in_background: true` | Agents already run in the background and notify you when done | `spawn_agent` returns at once. Collect with `wait_agent`. |
-| `model` | `model`: `opus`, `sonnet`, `haiku`, or `fable`. Effort cannot be set per spawn. | `model` and `reasoning_effort` |
+| `model` | `model`: `opus`, `sonnet`, `haiku`, or `fable`. The entry's effort picks the `pstack-effort-<effort>` agent type, which `port/install.sh` generates from the models file. | `model` and `reasoning_effort` |
 | `environment: "cloud"`, `cloud_base_branch` | No cloud workers. Run locally. A writer gets its own worktree (`isolation: "worktree"`). | No cloud workers. Run locally. Create a git worktree per writer and name it in the message. |
 | `AskQuestion` | `AskUserQuestion` | `request_user_input` when available, else ask in plain text |
 | todolist | Your task or todo tool | `update_plan` |
-| `/loop` | The `loop` skill, or `Monitor` for an event | No loop command. Poll in a shell loop with a long sleep. |
+| `/loop` | The `loop` skill (`/loop 30m <tick prompt>`), or `Monitor` for an event | See the tick rule under Long runs |
 | MCP discovery (the `mcps/` directory) | MCP tools are named `mcp__<server>__<tool>`. Search deferred tools too. | `codex mcp list`, plus the MCP tools in your tool list |
 
 Named agents:
 
 | pstack agent | Claude Code | Codex |
 |---|---|---|
-| `poteto-agent` | `subagent_type: "poteto-agent"` | A default agent whose message starts: "Before any work, read `~/.agents/pstack/skills/poteto-mode/SKILL.md` in full, including its Principles section." |
+| `poteto-agent` | `subagent_type: "poteto-agent"`. When the role's entry has an effort, use `pstack-effort-<effort>` with the Codex message opening instead. | A default agent whose message starts: "Before any work, read `~/.agents/pstack/skills/poteto-mode/SKILL.md` in full, including its Principles section." |
 | `comment-sicko` | `subagent_type: "comment-sicko"` | A default agent whose message starts with the body of `~/.agents/pstack/agents/comment-sicko.md` |
 
 ## Models
@@ -61,7 +61,7 @@ An entry is `<harness>:<model>[@<effort>]`, where harness is `claude` or `codex`
 - `arena cross-judge pool` gets one seat. Prefer a foreign entry, since that is a different model family from yours.
 - Every other role takes the first native entry. With no native entry, it takes the first entry and runs it foreign.
 
-Run a native entry as a subagent with its model. Codex also takes its effort. Run a foreign entry through the other harness's CLI, below.
+Run a native entry as a subagent with its model and effort, as the Tools table says. Run a foreign entry through the other harness's CLI, below.
 
 | Role | Default |
 |---|---|
@@ -104,11 +104,30 @@ Wherever a skill reads the active workspace's `agent-transcripts/` directory:
 
 Stay inside the active project's transcripts, as the Cursor rule says.
 
+## Long runs
+
+For Orchestrate, Autopilot, Autonomous run, Multi-phase plan, Session pickup, and Pause safely:
+
+- **Scale.** Everything runs on this machine. Keep 3 to 5 writers and 1 to 3 live UI lanes in flight. Default to a flat tree where you drain every worker yourself. A Claude Code subagent ends with its turn, so a sub-coordinator is one blocking pass per wave, not a durable layer.
+- **Resume an agent.** Claude Code: `SendMessage` to its id or name, a deferred tool you load first. Codex: `send_message` to a running agent, `followup_task` for more work. Either one restarts an idle agent, so never resume one just to check on it.
+- **Check on an agent.** Claude Code has no agent list. Record each id from the spawn result in the unit's row, then probe side effects: `git -C <worktree> log -1`, `gh pr view`. No notification and no side effect past the expected runtime means stuck. Codex: `list_agents`, or `wait_agent` with a short `timeout_ms`.
+- **Stop an agent.** Claude Code: `TaskStop` on its task id. Codex: `interrupt_agent`. For a hold, stop it, write the stop in the standing orders, and respawn from the brief and branch on release. The worktree survives.
+- **The 30-minute tick.** Claude Code: `/loop 30m <tick prompt>`. Codex: with agents in flight, `wait_agent` with a 30-minute `timeout_ms`, which returns early on a completion. With none in flight, `sleep 1800` with the command timeout set above it. Both harnesses have `/goal <condition>`, which keeps the thread working across turns until the condition holds.
+- **Waiting on CI inside a subagent.** `gh pr checks <pr> --watch`. In Claude Code, run it with `run_in_background` or through `Monitor`, since foreground `sleep` is blocked.
+- **Reader and verifier lanes.** A lane that checks out a SHA gets its own detached worktree, `git worktree add --detach /tmp/swarm-<pr>/wt-<n> <sha>`, with its own port and browser profile. Remove it when done. Never `git checkout` in the shared checkout.
+- **Trunk copies of pstack.** A plan line like `git show origin/main:pstack/skills/<path>` assumes pstack lives in the repo you are working on. It does not here. Read `~/.agents/pstack/skills/<path>` from disk and keep the literal line in plans, since `check-plan.mjs` requires it. Run that checker as `node ~/.agents/pstack/skills/poteto-mode/scripts/check-plan.mjs <plan.md>`.
+- **The agent store.** Where a playbook says "the current agent's store (path in the system prompt)", use `~/.agents/pstack-store/<repo-slug>/`. Pass `--store` to every `orch` call, because shell state does not persist between calls.
+- **Frontier without `gt`.** `orch frontier set` shells out to Graphite's `gt`. Without it, build `frontier.json` from `gh pr list --json number,headRefName,headRefOid,baseRefName`.
+- **Screenshots and video.** A terminal shows neither. Record with `control-ui`'s CDP screencast or `screencapture -v`, then give file paths or attach them to a PR comment.
+- **After a restart.** Nothing local survives. Resume the coordinator (`claude --continue`, `codex resume`) and re-arm the tick. Treat every in-flight unit as dead. Check `git worktree list`, commit and push dirty worktrees as `wip:`, then respawn. For an overnight run, keep the Mac awake with `caffeinate -i`.
+
 ## Not available outside Cursor
 
 - Cloud agents, the Cursor dashboard, and Cursor restarts. Every worker is local, and local subagents do not survive a restart.
+- A Cursor cloud-agent URL in Session pickup. Only its pushed branch or PR can be picked up.
+- Unattended multi-day programs at the scale of hundreds of agents. Shrink the program to what one supervised machine can run.
 - Cursor automations and webhooks (`make-bot-ui`, `benny`).
 - `poteto-mode`'s `mode` and `reminder` frontmatter. Invoke `/poteto-mode` or `$poteto-mode` per task.
 - Origin. Use it only when `command -v origin` succeeds, as the playbooks say. Otherwise `gh`.
 - Bugbot is a GitHub app. It applies only where the repo has it installed.
-- `scripts/watch-pr` and `scripts/orch` need `bun`. Without it, read PR state with `gh pr view --json` and `gh pr checks`, and keep the orchestrate ledger as a TSV by hand.
+- `scripts/watch-pr` and `scripts/orch` need `bun`. Their first run installs dependencies, which needs network. Without `bun`, read PR state with `gh pr view --json` and `gh pr checks`, and keep the orchestrate ledger as a TSV by hand.

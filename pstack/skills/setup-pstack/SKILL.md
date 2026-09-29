@@ -32,7 +32,7 @@ The defaults are the file shape in step 5. If `~/.agents/pstack-models.md` exist
 
 **(b) Apply it.** Start from the step 5 defaults, and on a re-run keep any role the user changed. Set every entry's effort to `@max`, `@xhigh`, `@high`, or `@medium` for the four budgets in order. If a Codex model does not support that effort, use its highest supported effort below it. `inherit-parent` and `auto` do not change.
 
-**(c) Show the roles and confirm.** Show every role with its entries, mark any unconfirmed entry as needing a choice, and list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count, and entries from both harnesses give cross-family review. Say that native Claude Code subagents ignore effort, because the `Agent` tool cannot set it per spawn. Effort still applies to Codex subagents and to every foreign seat.
+**(c) Show the roles and confirm.** Show every role with its entries, mark any unconfirmed entry as needing a choice, and list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count, and entries from both harnesses give cross-family review.
 
 ### 4. Validate
 
@@ -66,6 +66,10 @@ architect runners: claude:opus@max, codex:gpt-6-astra@max
 interrogate reviewers: claude:opus@max, codex:gpt-6-astra@max
 ```
 
-### 6. Confirm
+### 6. Install
+
+Run `~/.agents/pstack/port/install.sh`. It generates a `pstack-effort-<effort>` Claude Code agent for each effort the file gives a `claude:` entry, since the `Agent` tool cannot set effort per spawn, and removes the ones no longer used.
+
+### 7. Confirm
 
 Tell the user the file was written. Skills read it each time they run, so it applies from the next skill run in either harness. Re-running this skill updates it.

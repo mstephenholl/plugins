@@ -66,7 +66,7 @@ AGENTS=(
   poteto-agent
 )
 
-pstack="$(cd "$(dirname "$0")/.." && pwd)"
+pstack="$(cd -P "$(dirname "$0")/.." && pwd)"
 root="$(dirname "$pstack")"
 skill_targets=("$HOME/.claude/skills" "$HOME/.codex/skills")
 agent_target="$HOME/.claude/agents"
@@ -143,6 +143,35 @@ mkdir -p "$agent_target"
 prune "$agent_target" .md "${AGENTS[@]}"
 for name in "${AGENTS[@]}"; do
   link "$pstack/agents/$name.md" "$agent_target/$name.md"
+done
+
+# Claude Code's Agent tool takes a model per spawn but not an effort, so each
+# effort a claude: entry asks for gets a generated agent that pins it.
+models="${PSTACK_MODELS:-$HOME/.agents/pstack-models.md}"
+efforts=()
+if [[ -f $models ]]; then
+  while read -r effort; do
+    case $effort in
+      low | medium | high | xhigh | max) efforts+=("$effort") ;;
+      *) echo "warn: $models asks for unknown Claude effort '$effort'" >&2 ;;
+    esac
+  done < <(grep -v '^#' "$models" | grep -oE 'claude:[A-Za-z0-9._-]+@[a-z]+' | sed 's/.*@//' | sort -u)
+fi
+
+for file in "$agent_target"/pstack-effort-*.md; do
+  [[ -f $file ]] || continue
+  effort=$(basename "$file" .md)
+  effort=${effort#pstack-effort-}
+  [[ " ${efforts[*]} " == *" $effort "* ]] && continue
+  rm "$file"
+  echo "removed $file"
+done
+for effort in "${efforts[@]}"; do
+  file="$agent_target/pstack-effort-$effort.md"
+  content=$(sed "s/{{effort}}/$effort/g" "$pstack/port/effort-agent.md")
+  [[ -f $file && $(cat "$file") == "$content" ]] && continue
+  printf '%s\n' "$content" >"$file"
+  echo "wrote $file"
 done
 
 exit $failed
