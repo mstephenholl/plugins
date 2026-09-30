@@ -60,9 +60,9 @@ status=$(jq -r .status "$work/report.json")
 echo "status: $status"
 
 body() {
-  python3 - "$work/report.json" "$1" <<'PY'
+  python3 - "$work/report.json" "$1" "$GH_REPO" "$branch" <<'PY'
 import json, sys
-report, kind = json.load(open(sys.argv[1])), sys.argv[2]
+report, kind, repo, branch = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4]
 lines = [f"Upstream: cursor/plugins@{report['incoming'][:12]}", ""]
 if report.get("dropped"):
     lines.append(f"Dropped {report['dropped']} upstream paths outside the port.")
@@ -76,7 +76,10 @@ else:
     lines += ["", "Nothing needs porting."]
 if kind == "pr":
     lines += ["", "Merging records upstream progress, so the next sync only sees newer changes. "
-              "CI runs on this branch; run `pstack/port/smoke/smoke.py` before merging if a ported skill changed."]
+              "Run `pstack/port/smoke/smoke.py` before merging if a ported skill changed.",
+              "", f"CI for this branch: https://github.com/{repo}/actions/workflows/pstack-ci.yml?query=branch%3A{branch}. "
+              "GitHub holds the pull request's own CI run because the Actions bot opened it. "
+              "Approve that run to show the checks here, or read the dispatched run at the link."]
 else:
     lines += ["", "To resolve, run `pstack/port/merge-upstream.py` in a clone of this branch, fix the files above, "
               "commit the merge, and push. The next sync then opens a pull request for anything newer."]
