@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Links the pstack skills that work outside Cursor into Claude Code and Codex.
 # Idempotent: re-run after pulling upstream or editing the lists below.
+# `install.sh --uninstall` removes every link and generated agent it made.
 #
 # The clone must live outside ~/.agents/skills. Codex scans that directory
 # recursively and would load every pstack skill, ported or not.
@@ -77,6 +78,15 @@ skill_targets=("$HOME/.claude/skills" "$HOME/.codex/skills")
 agent_target="$HOME/.claude/agents"
 failed=0
 
+if [[ ${1:-} == --uninstall ]]; then
+  SKILLS=()
+  TEAM_KIT_SKILLS=()
+  AGENTS=()
+  uninstall=1
+else
+  uninstall=0
+fi
+
 # Codex ignores `disable-model-invocation` and reads agents/openai.yaml instead.
 write_codex_policy() {
   local dir=$1 policy=$1/agents/openai.yaml
@@ -134,7 +144,14 @@ for dir in "${sources[@]}"; do
   installed+=("$dir")
 done
 
-link "$pstack" "$HOME/.agents/pstack"
+if ((uninstall)); then
+  if [[ -L $HOME/.agents/pstack && $(readlink "$HOME/.agents/pstack") == "$pstack" ]]; then
+    rm "$HOME/.agents/pstack"
+    echo "unlinked $HOME/.agents/pstack"
+  fi
+else
+  link "$pstack" "$HOME/.agents/pstack"
+fi
 
 for target in "${skill_targets[@]}"; do
   mkdir -p "$target"
@@ -154,7 +171,7 @@ done
 # effort a claude: entry asks for gets a generated agent that pins it.
 models="${PSTACK_MODELS:-$HOME/.agents/pstack-models.md}"
 efforts=()
-if [[ -f $models ]]; then
+if ((!uninstall)) && [[ -f $models ]]; then
   while read -r effort; do
     case $effort in
       low | medium | high | xhigh | max) efforts+=("$effort") ;;
