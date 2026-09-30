@@ -17,6 +17,17 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$root"
 
+# The sync pushes to origin, so origin must be the fork, not cursor/plugins.
+origin_url=$(git remote get-url origin)
+if [[ $origin_url =~ github\.com[:/]cursor/plugins(\.git)?$ ]]; then
+  echo "origin points at cursor/plugins. Run this from a clone of the fork." >&2
+  exit 1
+fi
+# In a fork, gh sends pull requests and queries to the parent repository
+# unless told otherwise, so pin every gh call to the fork.
+GH_REPO=${GITHUB_REPOSITORY:-$(sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##' <<<"$origin_url")}
+export GH_REPO
+
 write() {
   if [[ ${DRY_RUN:-} == 1 ]]; then
     echo "DRY_RUN: $*"

@@ -72,7 +72,7 @@ Run the same checks locally:
 python3 pstack/port/check.py
 python3 -m unittest discover -s pstack/port/tests -p 'test_*.py'
 pstack/port/tests/install_test.sh            # add /bin/bash to test macOS's stock bash
-DRY_RUN=1 pstack/port/sync-upstream.sh       # prints pushes and GitHub writes instead of making them
+DRY_RUN=1 pstack/port/sync-upstream.sh       # from a clone whose origin is the fork; prints pushes and GitHub writes
 ```
 
 The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks).
