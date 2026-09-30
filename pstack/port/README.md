@@ -6,7 +6,7 @@ The `claude-codex` branch of this fork runs pstack in Claude Code and Codex. Ups
 
 | Path | What it is |
 |---|---|
-| `~/.agents/src/cursor-plugins` | This sparse clone, with `pstack` and `cursor-team-kit` checked out. Remotes: `fork` (yours) and `origin` (cursor/plugins). |
+| `~/.agents/src/pstack`, or wherever you cloned | The `claude-codex` branch. It holds only `pstack/` and three `cursor-team-kit` skills. For updates, add cursor/plugins as a remote. The merge script finds it by URL. |
 | `~/.agents/pstack` | Symlink to the clone's `pstack/`. Skills and agents find each other through it. |
 | `~/.claude/skills/<name>`, `~/.codex/skills/<name>` | Symlinks to each ported skill. |
 | `~/.claude/agents/` | Symlinks to `comment-sicko` and `poteto-agent`, plus the generated `pstack-effort-<level>` agents. |
@@ -17,7 +17,7 @@ Keep the clone outside `~/.agents/skills`. Codex scans that directory recursivel
 ## Install
 
 ```sh
-~/.agents/src/cursor-plugins/pstack/port/install.sh
+~/.agents/src/pstack/pstack/port/install.sh
 ```
 
 It links the skills listed in `SKILLS` and `TEAM_KIT_SKILLS` into both harnesses and the agents into Claude Code. For every skill marked `disable-model-invocation: true`, it writes `agents/openai.yaml` with `allow_implicit_invocation: false`, because Codex ignores the frontmatter flag. It then generates a `pstack-effort-<level>` agent for each effort a `claude:` entry in the models file asks for, since Claude Code's `Agent` tool cannot set effort per spawn. It is idempotent, and it never overwrites a path it did not create.
@@ -29,11 +29,12 @@ In Codex, user-only skills appear in the `$` picker under the `pstack` namespace
 ## Update from upstream
 
 ```sh
-cd ~/.agents/src/cursor-plugins
+cd ~/.agents/src/pstack
+git remote add upstream https://github.com/cursor/plugins.git   # once
 pstack/port/merge-upstream.py
 ```
 
-The script fetches `origin`, merges `origin/main` without committing, and resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
+The script fetches the cursor/plugins remote, merges its `main` without committing, and drops every path outside the port, which upstream's changes to other plugins would otherwise bring back. It keeps our two READMEs over upstream's. It resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
 
 After resolving and committing, run `install.sh` and then the smoke test.
 
@@ -59,7 +60,7 @@ Each scenario runs one skill headless against a throwaway repo with a planted st
 ## Uninstall
 
 ```sh
-~/.agents/src/cursor-plugins/pstack/port/install.sh --uninstall
+~/.agents/src/pstack/pstack/port/install.sh --uninstall
 ```
 
 It removes every link and generated agent that `install.sh` made, plus `~/.agents/pstack`. It leaves the clone, `~/.agents/pstack-models.md`, and any Claude Code settings you added.
@@ -68,5 +69,5 @@ It removes every link and generated agent that `install.sh` made, plus `~/.agent
 
 - **Foreign seats.** Panels (`arena`, `architect`, `interrogate`) and `reflect`'s tooling lens seat the other harness through its CLI. In Codex, `claude` runs outside the sandbox, so Codex asks for escalation. With `approvals_reviewer = "auto_review"`, the reviewer may deny a seat that would send a session transcript to the other vendor. The seat is then reported as blocked and the run finishes without it. To keep code and transcripts inside the harness you run, put `foreign seats: off` in `~/.agents/pstack-models.md`, or answer `off` in `/setup-pstack`. Every role then runs natively, and each panel seats two native models so it still gets two reviewers.
 - **Claude Code prompts** before writing under `.claude/`, for example when `create-verification-skill` links `.claude/skills/verify-<app>`.
-- **Read permissions.** User-level allow rules for `Read(~/.agents/pstack/**)`, `Read(~/.agents/src/cursor-plugins/**)`, and `Read(~/.claude/skills/**)` in `~/.claude/settings.json` stop Claude Code from asking before it reads skill files. An allow rule for a symlinked path must match both the link and its target.
+- **Read permissions.** User-level allow rules for `Read(~/.agents/pstack/**)`, `Read(<your clone>/**)`, and `Read(~/.claude/skills/**)` in `~/.claude/settings.json` stop Claude Code from asking before it reads skill files. An allow rule for a symlinked path must match both the link and its target.
 - **Not ported:** `make-bot-ui` and the `benny` automation pack depend on Cursor automations. `automate-me` and the verification skills are ported but interactive, so the smoke test does not cover `automate-me` or `maintain-verification-skill`.
