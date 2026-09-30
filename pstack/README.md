@@ -12,29 +12,30 @@ The skill text is upstream's. Each ported skill carries one extra line that poin
 
 ## Set up
 
-1. Clone the `claude-codex` branch outside `~/.agents/skills`. Codex scans that directory recursively and would load every file as a skill.
+1. Install:
 
    ```sh
-   git clone -b claude-codex https://github.com/mstephenholl/plugins.git ~/.agents/src/pstack
+   curl -fsSL https://raw.githubusercontent.com/mstephenholl/plugins/claude-codex/pstack/port/bootstrap.sh | bash
    ```
 
-2. Link the skills into both harnesses:
+   This clones pstack to `~/.local/share/pstack`, checks out the newest release, puts the `pstack` command in `~/.local/bin`, and runs `pstack install`. That links each skill into `~/.claude/skills` and `~/.codex/skills`, links the two pstack agents into `~/.claude/agents`, and points `~/.agents/pstack` at the clone. It never overwrites a file it did not create. To install for one harness, end the command with `bash -s -- --claude` or `bash -s -- --codex`.
 
-   ```sh
-   ~/.agents/src/pstack/pstack/port/install.sh
-   ```
+2. Choose models with `pstack configure`. It detects the models each harness offers, asks for a reasoning budget and whether to allow foreign seats (see [Models](#models)), and writes `~/.agents/pstack-models.md`. In an agent session, `/setup-pstack` in Claude Code or `$setup-pstack` in Codex walks you through the same choices. For scripts, pass `--budget`, `--foreign-seats`, and `--set "ROLE=ENTRY"` with `--yes`.
 
-   This links each ported skill into `~/.claude/skills` and `~/.codex/skills`, links the two pstack agents into `~/.claude/agents`, and points `~/.agents/pstack` at the clone. It never overwrites a file it did not create.
+3. Check the result with `pstack doctor`. It prints each problem with the command that fixes it.
 
-3. Choose models. Run `/setup-pstack` in Claude Code or `$setup-pstack` in Codex. It detects the models you have, asks for a reasoning budget and whether to allow foreign seats (see [Models](#models)), writes `~/.agents/pstack-models.md`, and reruns `install.sh`.
+4. Optional, Claude Code only: `pstack install --claude-read-rules` adds read rules to `~/.claude/settings.json`, so Claude Code reads pstack's files without asking.
 
-4. Optional, Claude Code only: add these to `permissions.allow` in `~/.claude/settings.json`, so Claude Code reads pstack's files without asking. Adjust the second path to your clone. A rule for a symlinked path has to match both the link and its target.
+To install from a clone you manage yourself, clone the `claude-codex` branch anywhere outside `~/.agents/skills`, which Codex scans recursively, and run `pstack/port/pstack install` in it.
 
-   ```json
-   "Read(~/.agents/pstack/**)",
-   "Read(~/.agents/src/pstack/**)",
-   "Read(~/.claude/skills/**)"
-   ```
+| Command | What it does |
+|---|---|
+| `pstack install [--claude] [--codex] [--claude-read-rules]` | Links the skills and agents, and puts `pstack` on your PATH. It remembers which harnesses you chose. |
+| `pstack configure` | Chooses models, the reasoning budget, and foreign seats. `--dry-run --json` previews without writing. |
+| `pstack doctor` | Checks links, agents, the models file against the models you have, and optional tools. |
+| `pstack update [--head]` | Moves to the newest release, or the branch tip with `--head`, then reinstalls and runs `doctor`. |
+| `pstack uninstall [--purge]` | Removes every link and generated agent, and the `pstack` command. `--purge` also deletes the models file, and the clone if the bootstrap created it. |
+| `pstack status` | Shows the version, clone, harnesses, and models file. |
 
 ## Use
 
@@ -93,9 +94,9 @@ Claude Code's `Agent` tool cannot set reasoning effort per spawn, so `install.sh
 
 ## Update and uninstall
 
-To pull upstream pstack changes, run `pstack/port/merge-upstream.py` in the clone. It merges, drops everything outside the port, resolves the routine conflicts, and lists what needs porting. Then run `install.sh` and the smoke test. [`port/README.md`](port/README.md) covers updating, porting a new skill, and the smoke test.
+`pstack update` moves to the newest release and reinstalls. `pstack uninstall` removes everything the install set up, and `--purge` also removes your models file and the managed clone. [`CHANGELOG.md`](CHANGELOG.md) lists the releases.
 
-To remove everything `install.sh` set up, run `pstack/port/install.sh --uninstall`. It leaves the clone and your models file.
+Maintainers pull upstream pstack changes with `pstack/port/merge-upstream.py`, which a daily workflow also runs. [`port/README.md`](port/README.md) covers that, porting a new skill, CI, releases, and the smoke test.
 
 ## License
 

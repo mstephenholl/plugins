@@ -23,7 +23,7 @@ jobs:
       - name: Unit tests
         run: python3 -m unittest discover -s pstack/port/tests -p 'test_*.py' -v
       - name: Python compiles
-        run: python3 -m py_compile pstack/port/*.py pstack/port/smoke/smoke.py
+        run: python3 -m py_compile pstack/port/*.py pstack/port/pstack pstack/port/smoke/smoke.py
       - name: shellcheck
         run: git ls-files '*.sh' | xargs shellcheck
 
@@ -55,3 +55,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pstack/port/tests/install_test.sh ${{ matrix.shell }}
+      - name: pstack command, bootstrap, and update
+        run: python3 -m unittest pstack/port/tests/test_cli.py

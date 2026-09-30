@@ -6,23 +6,26 @@ The `claude-codex` branch of this fork runs pstack in Claude Code and Codex. Ups
 
 | Path | What it is |
 |---|---|
-| `~/.agents/src/pstack`, or wherever you cloned | The `claude-codex` branch. It holds only `pstack/` and three `cursor-team-kit` skills. For updates, add cursor/plugins as a remote. The merge script finds it by URL. |
+| `~/.local/share/pstack`, or wherever you cloned | The clone. The bootstrap puts it here and checks out the newest release. A maintainer's clone tracks the `claude-codex` branch instead, with cursor/plugins added as a remote, which the merge script finds by URL. |
+| `~/.local/bin/pstack` | Symlink to the `pstack` command, `port/pstack`. |
+| `~/.config/pstack/state.json` | The harnesses you installed for, so `update` reinstalls the same ones. |
 | `~/.agents/pstack` | Symlink to the clone's `pstack/`. Skills and agents find each other through it. |
 | `~/.claude/skills/<name>`, `~/.codex/skills/<name>` | Symlinks to each ported skill. |
 | `~/.claude/agents/` | Symlinks to `comment-sicko` and `poteto-agent`, plus the generated `pstack-effort-<level>` agents. |
-| `~/.agents/pstack-models.md` | Model per role, written by `/setup-pstack`. |
+| `~/.agents/pstack-models.md` | Model per role, written by `pstack configure` or `/setup-pstack`. |
 
 Keep the clone outside `~/.agents/skills`. Codex scans that directory recursively and would load every pstack skill, ported or not.
 
 ## Install
 
-```sh
-~/.agents/src/pstack/pstack/port/install.sh
-```
+Users install with the bootstrap one-liner in [`../README.md`](../README.md), which clones the repository and runs `pstack install`. The `pstack` command (`port/pstack`) is the interface for installing, configuring, checking, updating, and removing. It drives `port/install.sh`, which does the linking:
 
-It links the skills listed in `SKILLS` and `TEAM_KIT_SKILLS` into both harnesses and the agents into Claude Code. For every skill marked `disable-model-invocation: true`, it writes `agents/openai.yaml` with `allow_implicit_invocation: false`, because Codex ignores the frontmatter flag. It then generates a `pstack-effort-<level>` agent for each effort a `claude:` entry in the models file asks for, since Claude Code's `Agent` tool cannot set effort per spawn. It is idempotent, and it never overwrites a path it did not create.
+- It links the skills in `SKILLS` and `TEAM_KIT_SKILLS` into each harness in `PSTACK_HARNESSES`, and the agents into Claude Code. It removes the links from a harness left out.
+- For every skill marked `disable-model-invocation: true`, it writes `agents/openai.yaml` with `allow_implicit_invocation: false`, because Codex ignores the frontmatter flag.
+- It generates a `pstack-effort-<level>` agent for each effort a `claude:` entry in the models file asks for, since Claude Code's `Agent` tool cannot set effort per spawn.
+- It takes over links that point into another pstack clone, or at a clone that was deleted, so moving the clone just works. It never overwrites anything else.
 
-Then run `/setup-pstack` in either harness to choose models and a reasoning budget. It reruns `install.sh` for you.
+`pstack configure` holds the model logic: detection (`claude --help` and `codex debug models`), defaults per role, the budget, foreign seats, and your overrides. `/setup-pstack` asks the questions and calls it. `PSTACK_DETECT_JSON` fakes detection for tests.
 
 In Codex, user-only skills appear in the `$` picker under the `pstack` namespace, for example `$pstack:poteto-mode`. Typing `$poteto-mode` as plain text in `codex exec` does not load the skill.
 
@@ -77,17 +80,21 @@ DRY_RUN=1 pstack/port/sync-upstream.sh       # from a clone whose origin is the 
 
 The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks).
 
+## Releases
+
+1. Add a `## [X.Y.Z]` section to [`../CHANGELOG.md`](../CHANGELOG.md).
+2. Tag the commit `vX.Y.Z` and push the tag.
+3. `pstack-release.yml` reruns the checks and unit tests, then publishes a GitHub release with that section as its notes. It fails if the section is missing.
+
+`pstack update` and the bootstrap move to the newest `v*` tag, so merging an upstream sync pull request reaches users only when you cut a release.
+
 ## Uninstall
 
-```sh
-~/.agents/src/pstack/pstack/port/install.sh --uninstall
-```
-
-It removes every link and generated agent that `install.sh` made, plus `~/.agents/pstack`. It leaves the clone, `~/.agents/pstack-models.md`, and any Claude Code settings you added.
+`pstack uninstall` removes every link and generated agent the install made, `~/.agents/pstack`, the `pstack` command, and the saved state. `--purge` also deletes the models file, and the clone if it is the bootstrap's `~/.local/share/pstack`. Claude Code settings you added stay as they are.
 
 ## Behavior to know
 
 - **Foreign seats.** Panels (`arena`, `architect`, `interrogate`) and `reflect`'s tooling lens seat the other harness through its CLI. In Codex, `claude` runs outside the sandbox, so Codex asks for escalation. With `approvals_reviewer = "auto_review"`, the reviewer may deny a seat that would send a session transcript to the other vendor. The seat is then reported as blocked and the run finishes without it. To keep code and transcripts inside the harness you run, put `foreign seats: off` in `~/.agents/pstack-models.md`, or answer `off` in `/setup-pstack`. Every role then runs natively, and each panel seats two native models so it still gets two reviewers.
 - **Claude Code prompts** before writing under `.claude/`, for example when `create-verification-skill` links `.claude/skills/verify-<app>`.
-- **Read permissions.** User-level allow rules for `Read(~/.agents/pstack/**)`, `Read(<your clone>/**)`, and `Read(~/.claude/skills/**)` in `~/.claude/settings.json` stop Claude Code from asking before it reads skill files. An allow rule for a symlinked path must match both the link and its target.
+- **Read permissions.** `pstack install --claude-read-rules` adds allow rules for `Read(~/.agents/pstack/**)`, `Read(<your clone>/**)`, and `Read(~/.claude/skills/**)` to `~/.claude/settings.json`, so Claude Code stops asking before it reads skill files. An allow rule for a symlinked path must match both the link and its target.
 - **Not ported:** `make-bot-ui` and the `benny` automation pack depend on Cursor automations. `automate-me` and the verification skills are ported but interactive, so the smoke test does not cover `automate-me` or `maintain-verification-skill`.

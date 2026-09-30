@@ -1,0 +1,652 @@
+#!/usr/bin/env python3
+"""Install, configure, check, update, and remove pstack for Claude Code and Codex.
+
+  pstack install [--claude] [--codex] [--claude-read-rules]
+  pstack configure [--budget BUDGET] [--foreign-seats on|off] [--set "ROLE=ENTRY, ..."]
+                   [--dry-run] [--json] [--yes]
+  pstack doctor [--json] [--offline]
+  pstack update [--head]
+  pstack uninstall [--purge] [--yes]
+  pstack status
+
+Run `pstack COMMAND --help` for details. Every command acts on the clone this
+script lives in.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+PORT = os.path.dirname(os.path.realpath(__file__))
+PSTACK = os.path.dirname(PORT)
+ROOT = os.path.dirname(PSTACK)
+HOME = os.path.expanduser("~")
+MODELS = os.environ.get("PSTACK_MODELS") or os.path.join(HOME, ".agents", "pstack-models.md")
+STATE = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "pstack", "state.json")
+BIN = os.environ.get("PSTACK_BIN") or os.path.join(HOME, ".local", "bin")
+MANAGED_HOME = os.path.join(HOME, ".local", "share", "pstack")
+HARNESSES = ("claude", "codex")
+
+BUDGETS = {"unlimited": "max", "large": "xhigh", "medium": "high", "small": "medium"}
+EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+DEFAULT_MODELS = {"claude": {"judgment": "opus", "code": "sonnet"}, "codex": {"judgment": "gpt-6-astra", "code": "gpt-6.1-sol"}}
+CLAUDE_ALIASES = ["opus", "sonnet", "haiku", "fable"]
+# Role, and the kind of model it defaults to. Panels seat one reviewer per entry.
+ROLES = [
+    ("feature, refactoring", "code"),
+    ("bug-fix", "code"),
+    ("perf-issue", "code"),
+    ("hillclimb", "code"),
+    ("judgment and prose", "judgment"),
+    ("hardest tasks", "judgment"),
+    ("how explorer", "code"),
+    ("how explainer", "judgment"),
+    ("why investigators", "code"),
+    ("why synthesizer", "judgment"),
+    ("reflect tooling", "judgment"),
+    ("reflect judgment, divergent, synthesizer", "judgment"),
+    ("arena runners", "panel"),
+    ("arena cross-judge pool", "judgment"),
+    ("swarm workers", "code"),
+    ("architect runners", "panel"),
+    ("interrogate reviewers", "panel"),
+]
+ROLE_NAMES = [r for r, _ in ROLES]
+READ_RULES = ["Read(~/.agents/pstack/**)", "Read(~/.claude/skills/**)"]
+
+
+def fail(message, code=1):
+    print(f"pstack: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def git(*args):
+    return run(["git", "-C", ROOT, *args])
+
+
+# --- state --------------------------------------------------------------------
+
+
+def load_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def selected_harnesses(args=None):
+    chosen = [h for h in HARNESSES if args is not None and getattr(args, h, False)]
+    return chosen or load_state().get("harnesses") or list(HARNESSES)
+
+
+def version():
+    out = git("describe", "--tags", "--always", "--dirty").stdout.strip()
+    return out or "unknown"
+
+
+# --- model detection ----------------------------------------------------------
+
+
+def detect():
+    """Models each harness offers, and the efforts each supports. PSTACK_DETECT_JSON fakes it for tests."""
+    fake = os.environ.get("PSTACK_DETECT_JSON")
+    if fake:
+        with open(fake) as f:
+            return json.load(f)
+    found = {}
+    claude = shutil.which("claude")
+    efforts = EFFORTS
+    if claude:
+        help_text = run([claude, "--help"]).stdout
+        m = re.search(r"--effort <level>.*?\(([a-z, ]+)\)", help_text, re.S)
+        if m:
+            efforts = [e.strip() for e in m.group(1).split(",")]
+    found["claude"] = {"cli": bool(claude), "models": {a: efforts for a in CLAUDE_ALIASES} if claude else {}}
+    codex = shutil.which("codex")
+    models = {}
+    if codex:
+        try:
+            catalog = json.loads(run([codex, "debug", "models"]).stdout)
+            for m in catalog.get("models", catalog) if isinstance(catalog, dict) else catalog:
+                if isinstance(m, dict) and m.get("visibility") == "list":
+                    levels = [x.get("effort") if isinstance(x, dict) else x for x in m.get("supported_reasoning_levels") or []]
+                    models[m.get("slug")] = [lv for lv in levels if lv]
+        except ValueError:
+            pass
+    found["codex"] = {"cli": bool(codex), "models": models}
+    return found
+
+
+# --- models file ----------------------------------------------------------------
+
+
+def parse_entry(text):
+    text = text.strip()
+    if text in ("inherit-parent", "auto"):
+        return {"harness": None, "model": text, "effort": None}
+    m = re.fullmatch(r"(claude|codex):([A-Za-z0-9._-]+)(?:@([a-z]+))?", text)
+    if not m:
+        raise ValueError(f"bad entry {text!r}; expected claude:MODEL[@EFFORT], codex:MODEL[@EFFORT], or inherit-parent")
+    return {"harness": m.group(1), "model": m.group(2), "effort": m.group(3)}
+
+
+def format_entry(e):
+    if e["harness"] is None:
+        return e["model"]
+    return f"{e['harness']}:{e['model']}" + (f"@{e['effort']}" if e["effort"] else "")
+
+
+def read_models_file(path=MODELS):
+    config = {"budget": None, "foreign_seats": None, "roles": {}, "unknown": [], "bad": []}
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            m = re.match(r"^#\s*budget:\s*(\w+)", line)
+            if m:
+                config["budget"] = m.group(1)
+                continue
+            if not line or line.startswith("#"):
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            if key == "foreign seats":
+                config["foreign_seats"] = value.strip()
+            elif key in ROLE_NAMES:
+                try:
+                    config["roles"][key] = [parse_entry(v) for v in value.split(",") if v.strip()]
+                except ValueError as e:
+                    config["bad"].append(f"{key}: {e}")
+            else:
+                config["unknown"].append(key)
+    return config
+
+
+def default_entries(kind, harnesses, foreign_seats):
+    if kind == "panel":
+        entries = []
+        for h in harnesses:
+            entries.append((h, DEFAULT_MODELS[h]["judgment"]))
+            if foreign_seats == "off":
+                entries.append((h, DEFAULT_MODELS[h]["code"]))
+        return entries
+    return [(h, DEFAULT_MODELS[h][kind]) for h in harnesses]
+
+
+def clamp_effort(target, supported):
+    if not supported:
+        return target
+    ranked = [e for e in EFFORTS if e in supported]
+    below = [e for e in ranked if EFFORTS.index(e) <= EFFORTS.index(target)]
+    return (below or ranked)[-1]
+
+
+def plan(current, detected, harnesses, budget, foreign_seats, sets):
+    """The roles to write, and what a person has to decide."""
+    old_budget = (current or {}).get("budget")
+    old_foreign = (current or {}).get("foreign_seats") or "on"
+    target = BUDGETS[budget]
+    roles, kept, needs_choice = {}, [], []
+    for role, kind in ROLES:
+        pairs = default_entries(kind, harnesses, foreign_seats)
+        existing = (current or {}).get("roles", {}).get(role)
+        if existing is not None:
+            was_default = [(e["harness"], e["model"]) for e in existing] == default_entries(kind, harnesses, old_foreign)
+            if not was_default:
+                pairs = [(e["harness"], e["model"]) for e in existing]
+                kept.append(role)
+        if role in sets:
+            pairs = [(e["harness"], e["model"]) for e in sets[role]]
+        entries = []
+        for i, (harness, model) in enumerate(pairs):
+            if harness is None:
+                entries.append({"harness": None, "model": model, "effort": None})
+                continue
+            explicit = sets.get(role, [])[i]["effort"] if role in sets and sets[role][i]["effort"] else None
+            available = detected.get(harness, {}).get("models", {})
+            if model not in available:
+                needs_choice.append(f"{role}: {harness}:{model} is not available")
+            effort = explicit or clamp_effort(target, available.get(model))
+            entries.append({"harness": harness, "model": model, "effort": effort})
+        roles[role] = entries
+    dropped = (current or {}).get("unknown", [])
+    return {
+        "budget": budget,
+        "effort": target,
+        "foreign_seats": foreign_seats,
+        "harnesses": harnesses,
+        "roles": {r: [format_entry(e) for e in entries] for r, entries in roles.items()},
+        "kept_overrides": kept,
+        "needs_choice": needs_choice,
+        "dropped": dropped,
+        "previous": {"budget": old_budget, "foreign_seats": (current or {}).get("foreign_seats")},
+    }
+
+
+def write_models_file(result, path=MODELS):
+    lines = [
+        "# pstack model configuration, written by `pstack configure`. One line per role.",
+        "# Delete a line to fall back to the pstack-harness default. Rerun `pstack configure` to change it.",
+        "# Entry: <harness>:<model>[@<effort>], or inherit-parent. pstack-harness says how each role resolves.",
+        f"# budget: {result['budget']} ({result['effort']})",
+        f"foreign seats: {result['foreign_seats']}",
+    ]
+    lines += [f"{role}: {', '.join(entries)}" for role, entries in result["roles"].items()]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+# --- install ------------------------------------------------------------------
+
+
+def run_install(harnesses, uninstall=False, quiet=False):
+    """Runs install.sh. quiet sends its progress to stderr, so JSON on stdout stays parseable."""
+    env = {**os.environ, "PSTACK_HARNESSES": " ".join(harnesses), "PSTACK_MODELS": MODELS}
+    cmd = [os.path.join(PORT, "install.sh")] + (["--uninstall"] if uninstall else [])
+    proc = subprocess.run(cmd, env=env, stdout=sys.stderr if quiet else None)
+    return proc.returncode
+
+
+def link_command():
+    os.makedirs(BIN, exist_ok=True)
+    target = os.path.join(BIN, "pstack")
+    source = os.path.realpath(__file__)
+    if os.path.islink(target) or not os.path.exists(target):
+        if os.path.islink(target) and os.readlink(target) == source:
+            return target
+        if os.path.lexists(target):
+            os.remove(target)
+        os.symlink(source, target)
+        print(f"linked {target}")
+    else:
+        print(f"skip: {target} exists and is not a link; leaving it alone", file=sys.stderr)
+    return target
+
+
+def inside_agents_skills():
+    skills = os.path.realpath(os.path.join(HOME, ".agents", "skills"))
+    return os.path.realpath(ROOT) == skills or os.path.realpath(ROOT).startswith(skills + os.sep)
+
+
+def add_claude_read_rules():
+    path = os.path.join(HOME, ".claude", "settings.json")
+    settings = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                settings = json.load(f)
+        except ValueError:
+            fail(f"{path} is not valid JSON; fix it before adding rules")
+    allow = settings.setdefault("permissions", {}).setdefault("allow", [])
+    rules = READ_RULES + [f"Read({ROOT}/**)"]
+    added = [r for r in rules if r not in allow]
+    if added:
+        allow.extend(added)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+    return added
+
+
+def cmd_install(args):
+    if inside_agents_skills():
+        fail(f"the clone is inside ~/.agents/skills ({ROOT}). Codex scans that directory recursively and would load every file as a skill. Clone it elsewhere, such as {MANAGED_HOME}.")
+    harnesses = selected_harnesses(args)
+    code = run_install(harnesses)
+    state = load_state()
+    state.update({"harnesses": harnesses, "root": ROOT, "installed_at": datetime.datetime.now().isoformat(timespec="seconds")})
+    save_state(state)
+    target = link_command()
+    if args.claude_read_rules and "claude" in harnesses:
+        added = add_claude_read_rules()
+        print("added Claude Code read rules: " + ", ".join(added) if added else "Claude Code read rules already present")
+    on_path = os.path.realpath(BIN) in [os.path.realpath(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    print(f"\npstack {version()} installed for {' and '.join(harnesses)}.")
+    if not on_path:
+        print(f"Add {BIN} to your PATH to run `pstack` directly, or run {target}.")
+    if not os.path.exists(MODELS):
+        print("Next: run `pstack configure` to choose models, then `pstack doctor`.")
+    return code
+
+
+# --- configure ----------------------------------------------------------------
+
+
+def ask(question, options, default):
+    print(f"{question} [{'/'.join(options)}] (default {default}): ", end="", flush=True)
+    answer = sys.stdin.readline().strip()
+    if not answer:
+        return default
+    if answer not in options:
+        fail(f"{answer!r} is not one of {', '.join(options)}")
+    return answer
+
+
+def cmd_configure(args):
+    current = read_models_file()
+    detected = detect()
+    harnesses = [h for h in selected_harnesses() if detected.get(h, {}).get("cli")]
+    if not harnesses:
+        fail("neither claude nor codex is on your PATH, so there are no models to configure")
+    sets = {}
+    for item in args.set or []:
+        role, _, value = item.partition("=")
+        role = role.strip()
+        if role not in ROLE_NAMES:
+            fail(f"unknown role {role!r}. Roles: {', '.join(ROLE_NAMES)}")
+        try:
+            sets[role] = [parse_entry(v) for v in value.split(",") if v.strip()]
+        except ValueError as e:
+            fail(str(e))
+    budget = args.budget or (current or {}).get("budget")
+    foreign = args.foreign_seats or (current or {}).get("foreign_seats")
+    interactive = sys.stdin.isatty() and not args.json and not args.yes
+    if interactive and not args.budget:
+        budget = ask("Reasoning budget", list(BUDGETS), budget or "large")
+    if interactive and not args.foreign_seats:
+        print("Foreign seats let a panel run the other vendor's model through its CLI, which sends code and transcripts to that vendor.")
+        foreign = ask("Foreign seats", ["on", "off"], foreign or "off")
+    budget = budget if budget in BUDGETS else "large"
+    foreign = foreign if foreign in ("on", "off") else "off"
+
+    result = plan(current, detected, harnesses, budget, foreign, sets)
+    result["detected"] = {h: sorted(detected.get(h, {}).get("models", {})) for h in HARNESSES}
+    result["path"] = MODELS
+    blocked = bool(result["needs_choice"]) and not args.force
+    write = not args.dry_run and not blocked
+    if write and interactive:
+        print()
+        for role, entries in result["roles"].items():
+            print(f"  {role}: {', '.join(entries)}")
+        write = ask("Write this configuration", ["y", "n"], "y") == "y"
+    if write:
+        write_models_file(result)
+        run_install(selected_harnesses(), quiet=args.json)
+    result["written"] = write
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        if not interactive:
+            for role, entries in result["roles"].items():
+                print(f"{role}: {', '.join(entries)}")
+        for item in result["needs_choice"]:
+            print(f"needs a choice: {item}. Use --set \"ROLE=harness:model\" or --force.")
+        for role in result["kept_overrides"]:
+            print(f"kept your choice for {role}")
+        for key in result["dropped"]:
+            print(f"dropped retired line {key!r}")
+        print(f"\n{'Wrote' if write else 'Did not write'} {MODELS} (budget {budget}, foreign seats {foreign}).")
+    return 2 if blocked else 0
+
+
+# --- doctor -------------------------------------------------------------------
+
+
+def cmd_doctor(args):
+    findings = []
+
+    def note(level, message, fix=None):
+        findings.append({"level": level, "message": message, "fix": fix})
+
+    harnesses = selected_harnesses()
+    note("ok", f"pstack {version()} at {ROOT}, for {' and '.join(harnesses)}")
+    if inside_agents_skills():
+        note("error", "the clone is inside ~/.agents/skills, which Codex scans recursively", f"move it, for example to {MANAGED_HOME}, and run `pstack install`")
+    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+        note("warn", "the clone has uncommitted changes", "commit or discard them before `pstack update`")
+
+    anchor = os.path.join(HOME, ".agents", "pstack")
+    if os.path.realpath(anchor) != os.path.realpath(PSTACK):
+        note("error", "~/.agents/pstack does not point at this clone, so skills cannot find each other", "run `pstack install`")
+
+    listed = {}
+    with open(os.path.join(PORT, "install.sh")) as f:
+        body = f.read()
+    for name in ("SKILLS", "TEAM_KIT_SKILLS", "AGENTS"):
+        block = re.search(rf"^{name}=\((.*?)^\)", body, re.S | re.M)
+        listed[name] = block.group(1).split() if block else []
+    detected = detect()
+    for harness in harnesses:
+        if not detected.get(harness, {}).get("cli"):
+            note("error", f"{harness} is not on your PATH", f"install it, or run `pstack install --{'codex' if harness == 'claude' else 'claude'}` to install for one harness")
+        skills_dir = os.path.join(HOME, f".{harness}", "skills")
+        missing = [s for s in listed["SKILLS"] + listed["TEAM_KIT_SKILLS"] if not os.path.isfile(os.path.join(skills_dir, s, "SKILL.md"))]
+        if missing:
+            note("error", f"{len(missing)} skills are not linked into {skills_dir}: {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}", "run `pstack install`")
+        else:
+            note("ok", f"{len(listed['SKILLS']) + len(listed['TEAM_KIT_SKILLS'])} skills linked into {skills_dir}")
+        dangling = [n for n in os.listdir(skills_dir) if os.path.islink(os.path.join(skills_dir, n)) and not os.path.exists(os.path.join(skills_dir, n))] if os.path.isdir(skills_dir) else []
+        if dangling:
+            note("warn", f"dangling links in {skills_dir}: {', '.join(dangling)}", "remove them, or run `pstack install` if they are pstack's")
+    if "claude" in harnesses:
+        agents_dir = os.path.join(HOME, ".claude", "agents")
+        missing = [a for a in listed["AGENTS"] if not os.path.isfile(os.path.join(agents_dir, f"{a}.md"))]
+        if missing:
+            note("error", f"Claude Code agents missing: {', '.join(missing)}", "run `pstack install`")
+
+    config = read_models_file()
+    if config is None:
+        note("warn", f"no models file at {MODELS}; skills use pstack-harness's defaults", "run `pstack configure`")
+    else:
+        note("ok", f"models file: budget {config['budget'] or 'unrecorded'}, foreign seats {config['foreign_seats'] or 'on (default)'}")
+        wanted = set()
+        for role, entries in config["roles"].items():
+            for e in entries:
+                if e["harness"] is None or e["harness"] not in harnesses:
+                    continue
+                if e["harness"] == "claude" and e["effort"]:
+                    wanted.add(e["effort"])
+                models = detected.get(e["harness"], {}).get("models", {})
+                if detected.get(e["harness"], {}).get("cli") and e["model"] not in models:
+                    note("error", f"{role}: {format_entry(e)} is not an available model", f"run `pstack configure --set \"{role}=...\"`")
+                elif e["effort"] and models.get(e["model"]) and e["effort"] not in models[e["model"]]:
+                    note("warn", f"{role}: {e['model']} does not support effort {e['effort']}", "rerun `pstack configure`")
+        for key in config["unknown"]:
+            note("warn", f"the models file has a line for unknown role {key!r}", "rerun `pstack configure` to drop it")
+        for problem in config["bad"]:
+            note("error", f"the models file has a bad line: {problem}", "fix it, or rerun `pstack configure`")
+        if config["foreign_seats"] != "off" and len([h for h in HARNESSES if detected.get(h, {}).get("cli")]) < 2:
+            note("warn", "foreign seats are on, but only one harness CLI is installed", "run `pstack configure --foreign-seats off`")
+        if "claude" in harnesses:
+            agents_dir = os.path.join(HOME, ".claude", "agents")
+            have = {f[len("pstack-effort-"):-3] for f in os.listdir(agents_dir) if f.startswith("pstack-effort-")} if os.path.isdir(agents_dir) else set()
+            if have != wanted:
+                note("error", f"Claude Code effort agents ({', '.join(sorted(have)) or 'none'}) do not match the models file ({', '.join(sorted(wanted)) or 'none'})", "run `pstack install`")
+
+    if "claude" in harnesses:
+        try:
+            with open(os.path.join(HOME, ".claude", "settings.json")) as f:
+                allow = json.load(f).get("permissions", {}).get("allow", [])
+        except (OSError, ValueError):
+            allow = []
+        if not all(r in allow for r in READ_RULES):
+            note("warn", "Claude Code will ask before reading pstack's files", "run `pstack install --claude-read-rules`")
+    for tool, why in (("gh", "the PR playbooks"), ("bun", "the Babysit and Orchestrate helper scripts")):
+        if not shutil.which(tool):
+            note("warn", f"{tool} is not installed; {why} need it")
+
+    if not args.offline:
+        latest = latest_release_tag(fetch=False, remote_check=True)
+        current_tag = git("describe", "--tags", "--abbrev=0").stdout.strip()
+        if latest and latest != current_tag:
+            note("warn", f"pstack {latest} is available (you have {current_tag or 'an untagged version'})", "run `pstack update`")
+
+    errors = [f for f in findings if f["level"] == "error"]
+    if args.json:
+        print(json.dumps({"ok": not errors, "findings": findings}, indent=2))
+    else:
+        marks = {"ok": "ok  ", "warn": "warn", "error": "FAIL"}
+        for f in findings:
+            print(f"{marks[f['level']]}  {f['message']}" + (f"\n      fix: {f['fix']}" if f["fix"] else ""))
+        print(f"\n{len(errors)} problems, {len([f for f in findings if f['level'] == 'warn'])} warnings.")
+    return 1 if errors else 0
+
+
+# --- update -------------------------------------------------------------------
+
+
+class NoUpdateRemote(Exception):
+    pass
+
+
+def update_remote():
+    upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").stdout.strip()
+    remote = upstream.split("/", 1)[0] if upstream else "origin"
+    url = git("remote", "get-url", remote).stdout.strip()
+    if not url:
+        raise NoUpdateRemote(f"no remote {remote!r} to update from")
+    if re.search(r"github\.com[:/]cursor/plugins(\.git)?$", url):
+        raise NoUpdateRemote(f"remote {remote!r} is cursor/plugins, not this port. This looks like a development clone; update it with git.")
+    return remote
+
+
+def version_key(tag):
+    return [int(n) for n in re.findall(r"\d+", tag)]
+
+
+def latest_release_tag(fetch=True, remote_check=False):
+    try:
+        remote = update_remote()
+    except NoUpdateRemote:
+        return None
+    if remote_check:
+        try:
+            out = run(["git", "-C", ROOT, "ls-remote", "--tags", "--refs", remote], timeout=15).stdout
+        except subprocess.TimeoutExpired:
+            return None
+        tags = [line.split("refs/tags/")[1] for line in out.splitlines() if "refs/tags/v" in line]
+    else:
+        if fetch:
+            git("fetch", "--quiet", "--tags", remote)
+        tags = git("tag", "--list", "v*").stdout.split()
+    return max(tags, key=version_key) if tags else None
+
+
+def cmd_update(args):
+    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+        fail("the clone has uncommitted changes; commit or discard them first")
+    try:
+        remote = update_remote()
+    except NoUpdateRemote as e:
+        fail(str(e))
+    before = version()
+    git("fetch", "--quiet", "--tags", remote)
+    tag = None if args.head else latest_release_tag(fetch=False)
+    if tag:
+        proc = git("checkout", "--quiet", tag)
+    else:
+        branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if branch == "HEAD":
+            default = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD").stdout.strip().split("/", 1)[-1] or "claude-codex"
+            git("checkout", "--quiet", default)
+        proc = git("merge", "--ff-only", "--quiet", "@{u}")
+    if proc.returncode != 0:
+        fail(f"update failed:\n{proc.stderr.strip()}")
+    after = version()
+    print(f"pstack {before} -> {after}" if before != after else f"pstack {after} is current")
+    code = run_install(selected_harnesses())
+    return code or cmd_doctor(argparse.Namespace(json=False, offline=True))
+
+
+# --- uninstall and status -------------------------------------------------------
+
+
+def cmd_uninstall(args):
+    code = run_install(list(HARNESSES), uninstall=True)
+    target = os.path.join(BIN, "pstack")
+    if os.path.islink(target) and os.path.realpath(target) == os.path.realpath(__file__):
+        os.remove(target)
+        print(f"unlinked {target}")
+    if os.path.exists(STATE):
+        os.remove(STATE)
+    if args.purge:
+        if not args.yes and (not sys.stdin.isatty() or ask(f"Delete {MODELS} and the clone at {ROOT}", ["y", "n"], "n") != "y"):
+            fail("not purging without confirmation; pass --yes")
+        if os.path.exists(MODELS):
+            os.remove(MODELS)
+            print(f"removed {MODELS}")
+        if os.path.realpath(ROOT) == os.path.realpath(MANAGED_HOME):
+            shutil.rmtree(ROOT)
+            print(f"removed {ROOT}")
+        else:
+            print(f"left the clone at {ROOT}, since pstack did not create it there")
+    print("\npstack is uninstalled. Claude Code settings you added stay as they are.")
+    return code
+
+
+def cmd_status(args):
+    config = read_models_file()
+    state = load_state()
+    print(f"pstack {version()}")
+    print(f"clone: {ROOT}")
+    print(f"harnesses: {', '.join(selected_harnesses())}" + ("" if state else " (not installed yet)"))
+    if config:
+        print(f"models: {MODELS} (budget {config['budget'] or 'unrecorded'}, foreign seats {config['foreign_seats'] or 'on'})")
+    else:
+        print("models: not configured; run `pstack configure`")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="pstack", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("install", help="link pstack's skills and agents into Claude Code and Codex")
+    p.add_argument("--claude", action="store_true", help="install for Claude Code (default: the saved choice, or both)")
+    p.add_argument("--codex", action="store_true", help="install for Codex")
+    p.add_argument("--claude-read-rules", action="store_true", help="let Claude Code read pstack's files without asking, via ~/.claude/settings.json")
+    p.set_defaults(run=cmd_install)
+
+    p = sub.add_parser("configure", help="choose models, reasoning budget, and foreign seats")
+    p.add_argument("--budget", choices=list(BUDGETS))
+    p.add_argument("--foreign-seats", choices=["on", "off"])
+    p.add_argument("--set", action="append", metavar="ROLE=ENTRY[, ENTRY]", help="override one role, e.g. \"swarm workers=claude:haiku\"")
+    p.add_argument("--dry-run", action="store_true", help="show the result without writing it")
+    p.add_argument("--json", action="store_true", help="print the result as JSON")
+    p.add_argument("--yes", action="store_true", help="do not ask anything")
+    p.add_argument("--force", action="store_true", help="write even if a model is not available")
+    p.set_defaults(run=cmd_configure)
+
+    p = sub.add_parser("doctor", help="check the installation and configuration")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--offline", action="store_true", help="skip the check for a newer release")
+    p.set_defaults(run=cmd_doctor)
+
+    p = sub.add_parser("update", help="move to the newest release and reinstall")
+    p.add_argument("--head", action="store_true", help="follow the branch tip instead of releases")
+    p.set_defaults(run=cmd_update)
+
+    p = sub.add_parser("uninstall", help="remove every link, agent, and the pstack command")
+    p.add_argument("--purge", action="store_true", help="also delete the models file, and the clone if pstack created it")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(run=cmd_uninstall)
+
+    p = sub.add_parser("status", help="show the version, clone, harnesses, and models file")
+    p.set_defaults(run=cmd_status)
+
+    args = parser.parse_args()
+    sys.exit(args.run(args))
+
+
+if __name__ == "__main__":
+    main()

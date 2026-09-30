@@ -5,78 +5,35 @@ description: Configure which models pstack uses per role and at what reasoning b
 
 # Setup pstack
 
-Write `~/.agents/pstack-models.md`, the per-role model config every pstack skill reads in both Claude Code and Codex. First read `~/.agents/pstack/skills/pstack-harness/SKILL.md` for the entry syntax, how each role resolves to a native subagent or a foreign CLI seat, and the question tool for your harness.
+Configure pstack's models through the `pstack` command, which detects models, validates choices, and writes `~/.agents/pstack-models.md`. Run it as `~/.agents/pstack/port/pstack`, since it may not be on your PATH. First read `~/.agents/pstack/skills/pstack-harness/SKILL.md` for the entry syntax, how each role resolves, and the question tool for your harness.
 
 ## Steps
 
-### 1. Detect available models
+### 1. Load the current state
 
-- Codex. Run `codex debug models`. It prints the catalog as JSON. Keep each model whose `visibility` is `list`, with the efforts in its `supported_reasoning_levels`.
-- Claude Code. The aliases `opus`, `sonnet`, `haiku`, and `fable`. Efforts are the `--effort` choices `claude --help` lists.
-- Check `command -v codex` and `command -v claude`. A harness whose CLI is missing cannot serve foreign seats. Mark its entries as needing a choice.
+Run `~/.agents/pstack/port/pstack configure --dry-run --json --yes`. It reports the models each harness offers (`detected`), the current `budget` and `foreign_seats`, every role's entries, roles whose model is unavailable (`needs_choice`), roles the user changed from the defaults (`kept_overrides`), and retired lines it will drop (`dropped`). It writes nothing.
 
-Never write a model you have not confirmed. `inherit-parent` and `auto` are always valid.
+### 2. Ask for a budget and foreign seats
 
-### 2. Load current state
+Use your harness's question tool, and name the current value of each.
 
-The defaults are the file shape in step 5. If `~/.agents/pstack-models.md` exists, read it and treat its `# budget` line, its `foreign seats` line, and its role lines as the current choices. A line whose role is not in step 5 is from a retired role. Drop it.
+- Budget, with these labels: `unlimited — keep max`, `large — xhigh reasoning`, `medium — high reasoning`, `small — medium reasoning`. They map to `--budget unlimited|large|medium|small`.
+- Foreign seats. A foreign seat runs a role on the other harness through its CLI, which sends code or the session transcript to that vendor. Offer `on — panels and reflect's tooling lens mix Claude and OpenAI models` and `off — everything stays in the harness you run it in`. With `off`, each panel seats two native models so it still gets two reviewers.
 
-### 3. Budget, map, and confirm
+### 3. Preview and confirm
 
-**(a) Ask for a budget.** Use your harness's question tool. Offer these four options with these exact labels, and name the current budget when the file records one.
+Run `~/.agents/pstack/port/pstack configure --budget <budget> --foreign-seats <on|off> --dry-run --json --yes`. Show every role with its entries, each `needs_choice` item, each kept override, and each dropped line. Ask whether to accept as-is or change specific roles, offering the `detected` models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count.
 
-- `unlimited — keep max`
-- `large — xhigh reasoning`
-- `medium — high reasoning`
-- `small — medium reasoning`
+Add one `--set "<role>=<entry>, <entry>"` per change, for example `--set "swarm workers=claude:haiku, codex:gpt-6-luna"`. Rerun the preview until nothing needs a choice. Never pass `--force` unless the user asks for a model the detection missed.
 
-**(b) Ask about foreign seats.** A foreign seat runs a role on the other harness through its CLI, which sends code or the session transcript to that vendor. Offer `on — panels and reflect's tooling lens mix Claude and OpenAI models` and `off — everything stays in the harness you run it in`, and name the current choice. With `off`, each panel role (`arena runners`, `architect runners`, `interrogate reviewers`) gets two native models per harness so it still seats two reviewers: `claude:opus, claude:sonnet, codex:gpt-6-astra, codex:gpt-6.1-sol`.
+### 4. Write
 
-**(c) Apply the budget.** Start from the step 5 defaults, and on a re-run keep any role the user changed. Set every entry's effort to `@max`, `@xhigh`, `@high`, or `@medium` for the four budgets in order. If a Codex model does not support that effort, use its highest supported effort below it. `inherit-parent` and `auto` do not change.
+Run the same command without `--dry-run`. It writes the file and reruns the install, which generates the `pstack-effort-<level>` Claude Code agents the file needs.
 
-**(d) Show the roles and confirm.** Show every role with its entries, mark any unconfirmed entry as needing a choice, and list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count. With foreign seats on, entries from both harnesses give cross-family review.
+### 5. Check and confirm
 
-### 4. Validate
+Run `~/.agents/pstack/port/pstack doctor --offline` and report any problem with its fix. Tell the user the file was written, and that skills read it each time they run, so it applies from the next skill run in either harness. They can rerun this skill, or `pstack configure`, to change it.
 
-Every entry must name a model detected for its harness, or be `inherit-parent` or `auto`. If a chosen entry is not available, stop and ask again.
-
-### 5. Write the file
-
-Overwrite the whole file so re-runs stay idempotent. Shape, shown with the `unlimited` budget:
-
-```
-# pstack model configuration, written by /setup-pstack. One line per role.
-# Delete a line to fall back to the pstack-harness default.
-# Entry: <harness>:<model>[@<effort>], or inherit-parent. pstack-harness says how each role resolves.
-# budget: unlimited (max)
-foreign seats: on
-feature, refactoring: claude:sonnet@max, codex:gpt-6.1-sol@max
-bug-fix: claude:sonnet@max, codex:gpt-6.1-sol@max
-perf-issue: claude:sonnet@max, codex:gpt-6.1-sol@max
-hillclimb: claude:sonnet@max, codex:gpt-6.1-sol@max
-judgment and prose: claude:opus@max, codex:gpt-6-astra@max
-hardest tasks: claude:opus@max, codex:gpt-6-astra@max
-how explorer: claude:sonnet@max, codex:gpt-6.1-sol@max
-how explainer: claude:opus@max, codex:gpt-6-astra@max
-why investigators: claude:sonnet@max, codex:gpt-6.1-sol@max
-why synthesizer: claude:opus@max, codex:gpt-6-astra@max
-reflect tooling: claude:opus@max, codex:gpt-6-astra@max
-reflect judgment, divergent, synthesizer: claude:opus@max, codex:gpt-6-astra@max
-arena runners: claude:opus@max, codex:gpt-6-astra@max
-arena cross-judge pool: claude:opus@max, codex:gpt-6-astra@max
-swarm workers: claude:sonnet@max, codex:gpt-6.1-sol@max
-architect runners: claude:opus@max, codex:gpt-6-astra@max
-interrogate reviewers: claude:opus@max, codex:gpt-6-astra@max
-```
-
-### 6. Install
-
-Run `~/.agents/pstack/port/install.sh`. It generates a `pstack-effort-<effort>` Claude Code agent for each effort the file gives a `claude:` entry, since the `Agent` tool cannot set effort per spawn, and removes the ones no longer used.
-
-### 7. Confirm
-
-Tell the user the file was written. Skills read it each time they run, so it applies from the next skill run in either harness. Re-running this skill updates it.
-
-### 8. Offer a verification skill (optional)
+### 6. Offer a verification skill (optional)
 
 Check whether the project has a way to drive the real app for proof (a `verify-*` skill, or an existing harness). If not, offer once: "want a project-local verification skill, so agents can drive the app the way a user does and prove changes work? I can generate one with /create-verification-skill." On yes, read `~/.agents/pstack/skills/create-verification-skill/SKILL.md` and follow it. On no, move on without pushing.

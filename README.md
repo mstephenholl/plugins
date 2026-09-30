@@ -5,11 +5,13 @@ This fork of [cursor/plugins](https://github.com/cursor/plugins) carries one plu
 ## Quick start
 
 ```sh
-git clone -b claude-codex https://github.com/mstephenholl/plugins.git ~/.agents/src/pstack
-~/.agents/src/pstack/pstack/port/install.sh
+curl -fsSL https://raw.githubusercontent.com/mstephenholl/plugins/claude-codex/pstack/port/bootstrap.sh | bash
+pstack configure
+pstack doctor
 ```
 
-Then run `/setup-pstack` in Claude Code, or `$setup-pstack` in Codex, and start with `/poteto-mode <task>`.
+Then start any task that needs rigor with `/poteto-mode <task>` in Claude Code, or pick `$pstack:poteto-mode` in Codex.
 
-- [`pstack/README.md`](pstack/README.md) covers setup, using the skills, models, and differences from Cursor's pstack.
-- [`pstack/port/README.md`](pstack/port/README.md) covers updating from upstream, porting a new skill, and the smoke test.
+- [`pstack/README.md`](pstack/README.md) covers the `pstack` command, using the skills, models, and differences from Cursor's pstack.
+- [`pstack/port/README.md`](pstack/port/README.md) covers updating from upstream, porting a new skill, CI, releases, and the smoke test.
+- [`pstack/CHANGELOG.md`](pstack/CHANGELOG.md) lists the releases.

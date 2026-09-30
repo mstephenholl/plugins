@@ -205,11 +205,17 @@ def check_references(skills, team_kit):
 
 
 def check_catalog(skills, team_kit):
-    listed = set()
+    # Only the table whose header has a Skill column is the catalog.
+    listed, column = set(), None
     for line in read(os.path.join(PSTACK, "README.md")).splitlines():
+        if not line.startswith("|"):
+            column = None
+            continue
         cells = [c.strip() for c in line.split("|")]
-        if len(cells) > 3 and line.startswith("|"):
-            listed.update(re.findall(r"`([a-z0-9*-]+)`", cells[2]))
+        if column is None:
+            column = cells.index("Skill") if "Skill" in cells else -1
+        elif column > 0 and len(cells) > column:
+            listed.update(re.findall(r"`([a-z0-9*-]+)`", cells[column]))
     expected = {s for s in skills if not s.startswith("principle-")} | set(team_kit)
     for name in sorted(expected - listed):
         problems.append(f"pstack/README.md's skill table does not list {name}.")

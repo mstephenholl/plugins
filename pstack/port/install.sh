@@ -2,6 +2,9 @@
 # Links the pstack skills that work outside Cursor into Claude Code and Codex.
 # Idempotent: re-run after pulling upstream or editing the lists below.
 # `install.sh --uninstall` removes every link and generated agent it made.
+# PSTACK_HARNESSES picks the harnesses to install into, "claude codex" by
+# default; links in a harness left out are removed. The `pstack` command
+# (port/pstack) sets it from its saved choice.
 # Runs under macOS's stock bash 3.2, which treats an empty "${array[@]}" as
 # unbound under set -u, hence the ${array[@]+"${array[@]}"} expansions.
 #
@@ -76,8 +79,8 @@ AGENTS=(
 
 pstack="$(cd -P "$(dirname "$0")/.." && pwd)"
 root="$(dirname "$pstack")"
-skill_targets=("$HOME/.claude/skills" "$HOME/.codex/skills")
 agent_target="$HOME/.claude/agents"
+harnesses=" ${PSTACK_HARNESSES:-claude codex} "
 failed=0
 
 if [[ ${1:-} == --uninstall ]]; then
@@ -102,10 +105,30 @@ write_codex_policy() {
   printf 'policy:\n  allow_implicit_invocation: false\n' >"$policy"
 }
 
+# True when a link points into another pstack clone, or at a pstack path that
+# no longer exists, so moving or re-cloning pstack relinks instead of failing.
+from_other_clone() {
+  local dest other
+  dest=$(readlink "$1")
+  case $dest in
+    */cursor-team-kit/skills/*) other=${dest%/cursor-team-kit/skills/*} ;;
+    */pstack/skills/* | */pstack/agents/*) other=${dest%/pstack/*} ;;
+    */pstack) other=${dest%/pstack} ;;
+    *) return 1 ;;
+  esac
+  [[ $other != "$root" ]] && { [[ -f $other/pstack/port/install.sh ]] || [[ ! -e $dest ]]; }
+}
+
 # link <source> <link path>
 link() {
   local source=$1 target=$2
   if [[ -L $target && $(readlink "$target") == "$source" ]]; then
+    return 0
+  fi
+  if [[ -L $target ]] && from_other_clone "$target"; then
+    rm "$target"
+    ln -s "$source" "$target"
+    echo "relinked $target"
     return 0
   fi
   if [[ -e $target || -L $target ]]; then
@@ -117,13 +140,15 @@ link() {
   echo "linked $target"
 }
 
-# Removes links into this clone whose names are not in the given list.
+# Removes links into this clone, or another pstack clone, whose names are not
+# in the given list.
 # prune <dir> <suffix> <name>...
 prune() {
   local dir=$1 suffix=$2 link name
   shift 2
   for link in "$dir"/*; do
-    [[ -L $link && $(readlink "$link") == "$root/"* ]] || continue
+    [[ -L $link ]] || continue
+    [[ $(readlink "$link") == "$root/"* ]] || from_other_clone "$link" || continue
     name=$(basename "$link" "$suffix")
     [[ " $* " == *" $name "* ]] && continue
     rm "$link"
@@ -156,25 +181,36 @@ else
   link "$pstack" "$HOME/.agents/pstack"
 fi
 
-for target in "${skill_targets[@]}"; do
-  mkdir -p "$target"
-  prune "$target" "" ${SKILLS[@]+"${SKILLS[@]}"} ${TEAM_KIT_SKILLS[@]+"${TEAM_KIT_SKILLS[@]}"}
-  for dir in ${installed[@]+"${installed[@]}"}; do
-    link "$dir" "$target/$(basename "$dir")"
-  done
+for harness in claude codex; do
+  target="$HOME/.$harness/skills"
+  if ((!uninstall)) && [[ $harnesses == *" $harness "* ]]; then
+    mkdir -p "$target"
+    prune "$target" "" ${SKILLS[@]+"${SKILLS[@]}"} ${TEAM_KIT_SKILLS[@]+"${TEAM_KIT_SKILLS[@]}"}
+    for dir in ${installed[@]+"${installed[@]}"}; do
+      link "$dir" "$target/$(basename "$dir")"
+    done
+  elif [[ -d $target ]]; then
+    prune "$target" ""
+  fi
 done
 
-mkdir -p "$agent_target"
-prune "$agent_target" .md ${AGENTS[@]+"${AGENTS[@]}"}
-for name in ${AGENTS[@]+"${AGENTS[@]}"}; do
-  link "$pstack/agents/$name.md" "$agent_target/$name.md"
-done
+claude=0
+if ((!uninstall)) && [[ $harnesses == *" claude "* ]]; then
+  claude=1
+  mkdir -p "$agent_target"
+  prune "$agent_target" .md ${AGENTS[@]+"${AGENTS[@]}"}
+  for name in ${AGENTS[@]+"${AGENTS[@]}"}; do
+    link "$pstack/agents/$name.md" "$agent_target/$name.md"
+  done
+elif [[ -d $agent_target ]]; then
+  prune "$agent_target" .md
+fi
 
 # Claude Code's Agent tool takes a model per spawn but not an effort, so each
 # effort a claude: entry asks for gets a generated agent that pins it.
 models="${PSTACK_MODELS:-$HOME/.agents/pstack-models.md}"
 efforts=()
-if ((!uninstall)) && [[ -f $models ]]; then
+if ((claude)) && [[ -f $models ]]; then
   while read -r effort; do
     case $effort in
       low | medium | high | xhigh | max) efforts+=("$effort") ;;

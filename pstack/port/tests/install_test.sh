@@ -41,6 +41,26 @@ HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "install with a models
 [[ -f $home/.claude/agents/pstack-effort-high.md ]] || fail "no pstack-effort-high agent"
 grep -q '^effort: high$' "$home/.claude/agents/pstack-effort-high.md" || fail "the effort agent does not pin its effort"
 
+PSTACK_HARNESSES=codex HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "a Codex-only install exited nonzero"
+[[ $(links_in "$home/.claude/skills") == 0 ]] || fail "a Codex-only install left Claude Code skill links"
+[[ $(links_in "$home/.claude/agents") == 0 ]] || fail "a Codex-only install left Claude Code agents"
+[[ $(links_in "$home/.codex/skills") == "$skills" ]] || fail "a Codex-only install dropped Codex skill links"
+HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "reinstalling both harnesses exited nonzero"
+[[ $(links_in "$home/.claude/skills") == "$skills" ]] || fail "reinstalling both harnesses did not restore Claude Code"
+
+# A second clone takes over the first one's links, and survives the first being deleted.
+other=$(cd -P "$(mktemp -d)" && pwd)
+trap 'rm -rf "$home" "$other"' EXIT
+repo="$(dirname "$(dirname "$port")")"
+mkdir -p "$other/clone"
+(cd "$repo" && tar cf - --exclude node_modules pstack cursor-team-kit) | (cd "$other/clone" && tar xf -)
+HOME=$home "$shell" "$other/clone/pstack/port/install.sh" >"$other/out" 2>&1 || fail "installing from a second clone failed: $(cat "$other/out")"
+[[ $(readlink "$home/.claude/skills/how") == "$other/clone/pstack/skills/how" ]] || fail "the second clone did not take over the links"
+[[ $(readlink "$home/.agents/pstack") == "$other/clone/pstack" ]] || fail "the second clone did not take over .agents/pstack"
+rm -rf "$other/clone"
+HOME=$home "$shell" "$port/install.sh" >"$other/out" 2>&1 || fail "reinstalling after deleting the second clone failed: $(cat "$other/out")"
+[[ $(readlink "$home/.claude/skills/how") == "$port/../skills/how" || -f $home/.claude/skills/how/SKILL.md ]] || fail "dangling links from a deleted clone were not replaced"
+
 HOME=$home "$shell" "$port/install.sh" --uninstall >/dev/null || fail "uninstall exited nonzero"
 left=$(find "$home/.claude" "$home/.codex" "$home/.agents" -type l | wc -l | tr -d ' ')
 [[ $left == 0 ]] || fail "$left links survived --uninstall"
