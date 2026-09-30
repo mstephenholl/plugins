@@ -186,6 +186,9 @@ def main():
             return
         proc = subprocess.run(["git", "-C", repo, "merge", "--no-commit", "--no-ff", incoming], capture_output=True, text=True)
         print(proc.stdout.strip() or proc.stderr.strip())
+        # 0 is a clean merge and 1 is conflicts. Anything else, or no merge left in progress, means git refused to merge.
+        if proc.returncode not in (0, 1) or not merge_head(repo):
+            sys.exit(f"git merge {incoming} failed (exit {proc.returncode}):\n{proc.stderr.strip()}")
 
     base = git(repo, "merge-base", "HEAD", incoming).strip()
     dropped = prune_and_keep_ours(repo)

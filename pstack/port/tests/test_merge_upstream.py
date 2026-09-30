@@ -70,6 +70,9 @@ class MergeTest(unittest.TestCase):
         git(self.upstream, "commit", "-qm", "upstream base")
 
         git(self.tmp, "clone", "-q", self.upstream, self.fork)
+        # merge-upstream.py runs git without -c overrides, and git merge needs an identity even with --no-commit.
+        git(self.fork, "config", "user.name", "t")
+        git(self.fork, "config", "user.email", "t@example.com")
         git(self.fork, "rm", "-rq", "pstack/skills/make-bot-ui", "advisor", "cursor-team-kit/skills/fix-ci", ".github/workflows/validate-plugins.yml")
         write(self.fork, "pstack/skills/how/SKILL.md", HOW_PORTED)
         write(self.fork, "README.md", "# pstack for Claude Code and Codex\n")
@@ -123,6 +126,17 @@ class MergeTest(unittest.TestCase):
         git(self.fork, "commit", "-qm", "merge upstream")
         code, report, _ = self.merge()
         self.assertEqual((code, report["status"]), (0, "up_to_date"))
+
+    def test_a_merge_git_refuses_fails_loudly(self):
+        git(self.fork, "config", "--unset", "user.name")
+        git(self.fork, "config", "--unset", "user.email")
+        self.upstream_commit({"advisor/README.md": "advisor v2\n"})
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        report = os.path.join(self.tmp, "report.json")
+        proc = subprocess.run(["python3", SCRIPT, "--repo", self.fork, "--ref", "origin/main", "--no-fetch", "--report", report], capture_output=True, text=True, env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("failed", proc.stderr)
+        self.assertFalse(os.path.exists(report))
 
     def test_a_real_conflict_is_left_for_a_person(self):
         write(self.fork, "pstack/skills/how/SKILL.md", HOW_PORTED.replace("Spawn a `Task` subagent.", "Spawn a subagent."))

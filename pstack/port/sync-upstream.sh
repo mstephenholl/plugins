@@ -41,6 +41,10 @@ if [[ -n $open_pr ]] && git fetch --quiet origin "$branch" 2>/dev/null &&
 fi
 
 python3 pstack/port/merge-upstream.py --no-fetch --report "$work/report.json" | tee "$work/merge.log" || true
+if [[ ! -f $work/report.json ]]; then
+  echo "merge-upstream.py failed before it could report; see its output above." >&2
+  exit 1
+fi
 status=$(jq -r .status "$work/report.json")
 echo "status: $status"
 
