@@ -19,7 +19,7 @@ Never write a model you have not confirmed. `inherit-parent` and `auto` are alwa
 
 ### 2. Load current state
 
-The defaults are the file shape in step 5. If `~/.agents/pstack-models.md` exists, read it and treat its `# budget` line and role lines as the current choices. A line whose role is not in step 5 is from a retired role. Drop it.
+The defaults are the file shape in step 5. If `~/.agents/pstack-models.md` exists, read it and treat its `# budget` line, its `foreign seats` line, and its role lines as the current choices. A line whose role is not in step 5 is from a retired role. Drop it.
 
 ### 3. Budget, map, and confirm
 
@@ -30,9 +30,11 @@ The defaults are the file shape in step 5. If `~/.agents/pstack-models.md` exist
 - `medium — high reasoning`
 - `small — medium reasoning`
 
-**(b) Apply it.** Start from the step 5 defaults, and on a re-run keep any role the user changed. Set every entry's effort to `@max`, `@xhigh`, `@high`, or `@medium` for the four budgets in order. If a Codex model does not support that effort, use its highest supported effort below it. `inherit-parent` and `auto` do not change.
+**(b) Ask about foreign seats.** A foreign seat runs a role on the other harness through its CLI, which sends code or the session transcript to that vendor. Offer `on — panels and reflect's tooling lens mix Claude and OpenAI models` and `off — everything stays in the harness you run it in`, and name the current choice. With `off`, each panel role (`arena runners`, `architect runners`, `interrogate reviewers`) gets two native models per harness so it still seats two reviewers: `claude:opus, claude:sonnet, codex:gpt-6-astra, codex:gpt-6.1-sol`.
 
-**(c) Show the roles and confirm.** Show every role with its entries, mark any unconfirmed entry as needing a choice, and list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count, and entries from both harnesses give cross-family review.
+**(c) Apply the budget.** Start from the step 5 defaults, and on a re-run keep any role the user changed. Set every entry's effort to `@max`, `@xhigh`, `@high`, or `@medium` for the four budgets in order. If a Codex model does not support that effort, use its highest supported effort below it. `inherit-parent` and `auto` do not change.
+
+**(d) Show the roles and confirm.** Show every role with its entries, mark any unconfirmed entry as needing a choice, and list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models plus `inherit-parent`. Panel roles (`arena runners`, `architect runners`, `interrogate reviewers`) run one seat per entry, so the list length sets the count. With foreign seats on, entries from both harnesses give cross-family review.
 
 ### 4. Validate
 
@@ -47,6 +49,7 @@ Overwrite the whole file so re-runs stay idempotent. Shape, shown with the `unli
 # Delete a line to fall back to the pstack-harness default.
 # Entry: <harness>:<model>[@<effort>], or inherit-parent. pstack-harness says how each role resolves.
 # budget: unlimited (max)
+foreign seats: on
 feature, refactoring: claude:sonnet@max, codex:gpt-6.1-sol@max
 bug-fix: claude:sonnet@max, codex:gpt-6.1-sol@max
 perf-issue: claude:sonnet@max, codex:gpt-6.1-sol@max

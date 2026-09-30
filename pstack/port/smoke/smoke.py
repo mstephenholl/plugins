@@ -257,8 +257,42 @@ def spawned_type(subagent_type, codex_marker):
     return check
 
 
+def foreign_seats_off():
+    try:
+        with open(os.path.expanduser("~/.agents/pstack-models.md")) as f:
+            return bool(re.search(r"^foreign seats:\s*off\s*$", f.read(), re.M))
+    except OSError:
+        return False
+
+
+def no_foreign_seat(ev):
+    cli = r"codex\s+exec\b" if ev.harness == "claude" else r"claude\s+-p\b"
+    crossed = ev.called(cli) or FOREIGN[ev.harness] in ev.harnesses
+    return not crossed, f"kept every seat in {ev.harness} (foreign seats off)"
+
+
+PANEL_MODELS = {"claude": ("opus", "sonnet"), "codex": ("gpt-6-astra", "gpt-6.1-sol")}
+
+
+def panel_seats(ev):
+    """With foreign seats off, a panel seats both native models from the models file."""
+    if not foreign_seats_off():
+        return True, "panel seating checked by the foreign-seat check"
+    missing = []
+    for model in PANEL_MODELS[ev.harness]:
+        if ev.harness == "claude":
+            ok = ev.called(rf'"model":\s*"{model}"', name="Agent")
+        else:
+            ok = ev.called(rf'"model":\s*"{re.escape(model)}"', name=r"(collaboration\.)?spawn_agent")
+        if not ok:
+            missing.append(model)
+    return not missing, "seated both native panel models" + (f" (missing {', '.join(missing)})" if missing else "")
+
+
 def foreign_seat(writes=False):
     def check(ev):
+        if foreign_seats_off():
+            return no_foreign_seat(ev)
         if ev.harness == "claude":
             needles = [r"codex\s+exec\b", r"gpt-6-astra", r"xhigh", r"workspace-write" if writes else r"read-only"]
         else:
@@ -338,12 +372,12 @@ SCENARIOS = {
     "interrogate": dict(
         skill="interrogate",
         task="Interrogate the feat branch diff against main. Intent: add update_user next to the cached get_user, and a CLI over it.",
-        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(), answer_matches(r"stale|invalidat", "finds the stale-cache bug")],
+        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(), panel_seats, answer_matches(r"stale|invalidat", "finds the stale-cache bug")],
     ),
     "arena": dict(
         skill="arena",
         task="Arena this: change update_user so get_user never returns stale data after an update. Each candidate works in its own git worktree under the scratch directory. Leave the main checkout untouched and report the base you picked and the grafts.",
-        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(writes=True), answer_matches(r"base", "reports a base pick")],
+        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(writes=True), panel_seats, answer_matches(r"base", "reports a base pick")],
     ),
     "swarm": dict(
         skill="swarm",

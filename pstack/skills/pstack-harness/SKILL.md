@@ -65,6 +65,8 @@ An entry is `<harness>:<model>[@<effort>]`, where harness is `claude` or `codex`
 - `arena cross-judge pool` and `reflect tooling` get one seat. Prefer a foreign entry, since that is a different model family from yours. For `reflect tooling`, stay native when the transcript's lookups need MCP servers only your harness has configured.
 - Every other role takes the first native entry. With no native entry, it takes the first entry and runs it foreign.
 
+If the file has the line `foreign seats: off`, never run a foreign entry, because a foreign seat sends code or transcripts to the other vendor. Drop every foreign entry before resolving. Panels then seat only their native entries, and the pool and `reflect tooling` take their first native entry. A role left with no native entry runs as `inherit-parent`. Without that line, foreign seats are on.
+
 Run a native entry as a subagent with its model and effort, as the Tools table says. Run a foreign entry through the other harness's CLI, below.
 
 | Role | Default |
