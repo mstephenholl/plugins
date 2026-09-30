@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge upstream cursor/plugins into the claude-codex port and triage the result.
+"""Merge upstream cursor/plugins into the Claude Code and Codex port and triage the result.
 
   merge-upstream.py [--ref REF] [--repo DIR] [--no-fetch] [--report FILE]
 

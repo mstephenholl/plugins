@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs pstack for Claude Code and Codex in one step:
 #
-#   curl -fsSL https://raw.githubusercontent.com/mstephenholl/plugins/claude-codex/pstack/port/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mstephenholl/pstack-claude-codex/main/pstack/port/bootstrap.sh | bash
 #
 # It clones the repository to ~/.local/share/pstack (or $PSTACK_HOME), checks
 # out the newest release, links the `pstack` command into ~/.local/bin (or
@@ -12,7 +12,7 @@
 # PSTACK_REPO and PSTACK_REF override the repository and the ref to check out.
 set -euo pipefail
 
-repo=${PSTACK_REPO:-https://github.com/mstephenholl/plugins.git}
+repo=${PSTACK_REPO:-https://github.com/mstephenholl/pstack-claude-codex.git}
 home=${PSTACK_HOME:-$HOME/.local/share/pstack}
 
 for tool in git python3; do

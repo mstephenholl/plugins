@@ -5,7 +5,7 @@ This fork of [cursor/plugins](https://github.com/cursor/plugins) carries one plu
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mstephenholl/plugins/claude-codex/pstack/port/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mstephenholl/pstack-claude-codex/main/pstack/port/bootstrap.sh | bash
 pstack configure
 pstack doctor
 ```

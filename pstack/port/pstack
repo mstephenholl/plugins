@@ -557,7 +557,7 @@ def cmd_update(args):
     else:
         branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         if branch == "HEAD":
-            default = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD").stdout.strip().split("/", 1)[-1] or "claude-codex"
+            default = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD").stdout.strip().split("/", 1)[-1] or "main"
             git("checkout", "--quiet", default)
         proc = git("merge", "--ff-only", "--quiet", "@{u}")
     if proc.returncode != 0:

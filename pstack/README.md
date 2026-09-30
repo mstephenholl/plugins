@@ -15,7 +15,7 @@ The skill text is upstream's. Each ported skill carries one extra line that poin
 1. Install:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/mstephenholl/plugins/claude-codex/pstack/port/bootstrap.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/mstephenholl/pstack-claude-codex/main/pstack/port/bootstrap.sh | bash
    ```
 
    This clones pstack to `~/.local/share/pstack`, checks out the newest release, puts the `pstack` command in `~/.local/bin`, and runs `pstack install`. That links each skill into `~/.claude/skills` and `~/.codex/skills`, links the two pstack agents into `~/.claude/agents`, and points `~/.agents/pstack` at the clone. It never overwrites a file it did not create. To install for one harness, end the command with `bash -s -- --claude` or `bash -s -- --codex`.
@@ -26,7 +26,7 @@ The skill text is upstream's. Each ported skill carries one extra line that poin
 
 4. Optional, Claude Code only: `pstack install --claude-read-rules` adds read rules to `~/.claude/settings.json`, so Claude Code reads pstack's files without asking.
 
-To install from a clone you manage yourself, clone the `claude-codex` branch anywhere outside `~/.agents/skills`, which Codex scans recursively, and run `pstack/port/pstack install` in it.
+To install from a clone you manage yourself, clone the repository anywhere outside `~/.agents/skills`, which Codex scans recursively, and run `pstack/port/pstack install` in it.
 
 | Command | What it does |
 |---|---|

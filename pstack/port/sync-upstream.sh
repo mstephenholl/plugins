@@ -10,7 +10,7 @@
 # of the port branch with full history.
 set -euo pipefail
 
-base=${BASE_BRANCH:-claude-codex}
+base=${BASE_BRANCH:-main}
 branch=${SYNC_BRANCH:-upstream-sync}
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 work=$(mktemp -d)

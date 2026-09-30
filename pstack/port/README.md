@@ -1,12 +1,12 @@
 # pstack for Claude Code and Codex
 
-The `claude-codex` branch of this fork runs pstack in Claude Code and Codex. Upstream's skill text stays as written wherever possible. Each ported skill gets one line under its title that points to the `pstack-harness` skill, which maps Cursor's tools, model slugs, paths, and transcripts to both harnesses. Keeping the diff small keeps upstream merges cheap.
+This repository runs pstack in Claude Code and Codex. Upstream's skill text stays as written wherever possible. Each ported skill gets one line under its title that points to the `pstack-harness` skill, which maps Cursor's tools, model slugs, paths, and transcripts to both harnesses. Keeping the diff small keeps upstream merges cheap.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `~/.local/share/pstack`, or wherever you cloned | The clone. The bootstrap puts it here and checks out the newest release. A maintainer's clone tracks the `claude-codex` branch instead, with cursor/plugins added as a remote, which the merge script finds by URL. |
+| `~/.local/share/pstack`, or wherever you cloned | The clone. The bootstrap puts it here and checks out the newest release. A maintainer's clone tracks `main` instead, with cursor/plugins added as a remote, which the merge script finds by URL. |
 | `~/.local/bin/pstack` | Symlink to the `pstack` command, `port/pstack`. |
 | `~/.config/pstack/state.json` | The harnesses you installed for, so `update` reinstalls the same ones. |
 | `~/.agents/pstack` | Symlink to the clone's `pstack/`. Skills and agents find each other through it. |
@@ -64,7 +64,7 @@ Each scenario runs one skill headless against a throwaway repo with a planted st
 
 Two workflows run on GitHub.
 
-- **`pstack-ci.yml`** runs on every push to `claude-codex`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
+- **`pstack-ci.yml`** runs on every push to `main`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
 - **`pstack-upstream-sync.yml`** runs daily and on demand. It runs `port/sync-upstream.sh`, which merges cursor/plugins with `merge-upstream.py`. When the script resolves everything, it opens or updates a pull request from the `upstream-sync` branch, labels it `needs-porting` if upstream added something to port, and starts CI on it. When conflicts need a person, it opens or updates an issue labeled `upstream-sync` instead.
 
 `check.py` fails when a skill folder is not installed, a skill's name does not match its folder, a user-only skill lacks its Codex policy file, a skill that uses Cursor terms lacks the pointer, `pstack-harness` stops mapping a Cursor term a skill uses, a relative reference or README link is broken, or the README catalog drifts from the installed skills. It warns about Cursor mentions that no known term covers.

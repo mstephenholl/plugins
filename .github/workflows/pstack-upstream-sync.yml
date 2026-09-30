@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude-codex
+          ref: main
           fetch-depth: 0
       - name: Configure git
         run: |
