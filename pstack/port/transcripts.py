@@ -37,7 +37,10 @@ def harness_of_this_session():
     """The nearest claude or codex ancestor process, since each CLI inherits the other's env vars when nested.
 
     Codex's sandbox forbids `ps`, and Claude Code under Codex runs unsandboxed, so a failed walk means Codex.
+    PSTACK_HARNESS=claude|codex overrides the detection, for tests.
     """
+    if os.environ.get("PSTACK_HARNESS") in ("claude", "codex"):
+        return os.environ["PSTACK_HARNESS"]
     pid = os.getppid()
     while pid > 1:
         try:

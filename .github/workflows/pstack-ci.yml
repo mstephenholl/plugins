@@ -1,0 +1,57 @@
+name: pstack CI
+
+on:
+  push:
+    branches: [claude-codex]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Checks and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Skill and port checks
+        run: python3 pstack/port/check.py
+      - name: Unit tests
+        run: python3 -m unittest discover -s pstack/port/tests -p 'test_*.py' -v
+      - name: Python compiles
+        run: python3 -m py_compile pstack/port/*.py pstack/port/smoke/smoke.py
+      - name: shellcheck
+        run: git ls-files '*.sh' | xargs shellcheck
+
+  bun:
+    name: poteto-mode script tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pstack/skills/poteto-mode/scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test orch watch-pr
+
+  install:
+    name: Install (${{ matrix.os }}, ${{ matrix.shell }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: bash
+          - os: macos-latest
+            shell: bash
+          - os: macos-latest
+            shell: /bin/bash
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pstack/port/tests/install_test.sh ${{ matrix.shell }}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Merge upstream cursor/plugins into the claude-codex port and triage the result.
 
-  merge-upstream.py [--ref REF] [--repo DIR] [--no-fetch]
+  merge-upstream.py [--ref REF] [--repo DIR] [--no-fetch] [--report FILE]
 
 1. Fetches the cursor/plugins remote, whatever it is named, and merges its
    main (or REF), or picks up a merge already in progress.
@@ -15,11 +15,16 @@
    terms), ported skills that disappeared, and Cursor terms that upstream
    newly added to skills already ported.
 
+--report writes the outcome as JSON for CI: status (up_to_date, merged,
+or conflicts), the incoming commit, and what was dropped, resolved, left
+for a person, and needs porting.
+
 It never commits. Finish the merge yourself, then run port/install.sh and
 port/smoke/smoke.py.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -27,7 +32,7 @@ import sys
 
 POINTER = re.compile(r"^Outside Cursor, first read `~/\.agents/pstack/skills/pstack-harness/SKILL\.md`.*$", re.M)
 # What the port keeps. Anything else upstream adds or changes is dropped on merge.
-KEEP = re.compile(r"^(README\.md|\.gitignore|pstack/|cursor-team-kit/(LICENSE|skills/(deslop|control-ui|control-cli)/))")
+KEEP = re.compile(r"^(README\.md|\.gitignore|pstack/|cursor-team-kit/(LICENSE|skills/(deslop|control-ui|control-cli)/)|\.github/workflows/pstack-[^/]+\.yml$)")
 DROP = re.compile(r"^pstack/(\.cursor-plugin|assets|automations|docs|skills/make-bot-ui)/")
 OURS = {"README.md", "pstack/README.md"}
 
@@ -153,8 +158,14 @@ def main():
     parser.add_argument("--ref", help="what to merge (default: <cursor/plugins remote>/main)")
     parser.add_argument("--repo", default=os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
     parser.add_argument("--no-fetch", action="store_true")
+    parser.add_argument("--report", help="write the outcome as JSON to this file")
     args = parser.parse_args()
     repo = os.path.realpath(args.repo)
+
+    def write_report(**fields):
+        if args.report:
+            with open(args.report, "w") as f:
+                json.dump(fields, f, indent=2)
 
     if merge_head(repo):
         incoming = "MERGE_HEAD"
@@ -162,12 +173,16 @@ def main():
     else:
         if git(repo, "status", "--porcelain", "--untracked-files=no").strip():
             sys.exit("the working tree has uncommitted changes; commit or stash them first")
-        remote = upstream_remote(repo)
-        if not args.no_fetch:
-            git(repo, "fetch", "-q", remote)
-        incoming = args.ref or f"{remote}/main"
+        if args.ref and args.no_fetch:
+            incoming = args.ref
+        else:
+            remote = upstream_remote(repo)
+            if not args.no_fetch:
+                git(repo, "fetch", "-q", remote)
+            incoming = args.ref or f"{remote}/main"
         if not git(repo, "rev-list", f"HEAD..{incoming}").strip():
             print(f"already up to date with {incoming}")
+            write_report(status="up_to_date", incoming=git(repo, "rev-parse", incoming).strip())
             return
         proc = subprocess.run(["git", "-C", repo, "merge", "--no-commit", "--no-ff", incoming], capture_output=True, text=True)
         print(proc.stdout.strip() or proc.stderr.strip())
@@ -188,6 +203,14 @@ def main():
         for item in report:
             print(f"- {item}")
 
+    write_report(
+        status="conflicts" if manual else "merged",
+        incoming=git(repo, "rev-parse", incoming).strip(),
+        dropped=dropped,
+        resolved=resolved,
+        manual=manual,
+        to_port=report,
+    )
     print("\nnext: " + ("resolve the conflicts above, then " if manual else "") + "review with `git diff --cached`, commit the merge, run port/install.sh, and run port/smoke/smoke.py.")
     sys.exit(1 if manual else 0)
 

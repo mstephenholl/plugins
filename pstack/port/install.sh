@@ -2,6 +2,8 @@
 # Links the pstack skills that work outside Cursor into Claude Code and Codex.
 # Idempotent: re-run after pulling upstream or editing the lists below.
 # `install.sh --uninstall` removes every link and generated agent it made.
+# Runs under macOS's stock bash 3.2, which treats an empty "${array[@]}" as
+# unbound under set -u, hence the ${array[@]+"${array[@]}"} expansions.
 #
 # The clone must live outside ~/.agents/skills. Codex scans that directory
 # recursively and would load every pstack skill, ported or not.
@@ -130,11 +132,11 @@ prune() {
 }
 
 sources=()
-for name in "${SKILLS[@]}"; do sources+=("$pstack/skills/$name"); done
-for name in "${TEAM_KIT_SKILLS[@]}"; do sources+=("$root/cursor-team-kit/skills/$name"); done
+for name in ${SKILLS[@]+"${SKILLS[@]}"}; do sources+=("$pstack/skills/$name"); done
+for name in ${TEAM_KIT_SKILLS[@]+"${TEAM_KIT_SKILLS[@]}"}; do sources+=("$root/cursor-team-kit/skills/$name"); done
 
 installed=()
-for dir in "${sources[@]}"; do
+for dir in ${sources[@]+"${sources[@]}"}; do
   if [[ ! -f $dir/SKILL.md ]]; then
     echo "missing: $dir/SKILL.md" >&2
     failed=1
@@ -150,20 +152,21 @@ if ((uninstall)); then
     echo "unlinked $HOME/.agents/pstack"
   fi
 else
+  mkdir -p "$HOME/.agents"
   link "$pstack" "$HOME/.agents/pstack"
 fi
 
 for target in "${skill_targets[@]}"; do
   mkdir -p "$target"
-  prune "$target" "" "${SKILLS[@]}" "${TEAM_KIT_SKILLS[@]}"
-  for dir in "${installed[@]}"; do
+  prune "$target" "" ${SKILLS[@]+"${SKILLS[@]}"} ${TEAM_KIT_SKILLS[@]+"${TEAM_KIT_SKILLS[@]}"}
+  for dir in ${installed[@]+"${installed[@]}"}; do
     link "$dir" "$target/$(basename "$dir")"
   done
 done
 
 mkdir -p "$agent_target"
-prune "$agent_target" .md "${AGENTS[@]}"
-for name in "${AGENTS[@]}"; do
+prune "$agent_target" .md ${AGENTS[@]+"${AGENTS[@]}"}
+for name in ${AGENTS[@]+"${AGENTS[@]}"}; do
   link "$pstack/agents/$name.md" "$agent_target/$name.md"
 done
 
@@ -184,11 +187,11 @@ for file in "$agent_target"/pstack-effort-*.md; do
   [[ -f $file ]] || continue
   effort=$(basename "$file" .md)
   effort=${effort#pstack-effort-}
-  [[ " ${efforts[*]} " == *" $effort "* ]] && continue
+  [[ " ${efforts[*]-} " == *" $effort "* ]] && continue
   rm "$file"
   echo "removed $file"
 done
-for effort in "${efforts[@]}"; do
+for effort in ${efforts[@]+"${efforts[@]}"}; do
   file="$agent_target/pstack-effort-$effort.md"
   content=$(sed "s/{{effort}}/$effort/g" "$pstack/port/effort-agent.md")
   [[ -f $file && $(cat "$file") == "$content" ]] && continue

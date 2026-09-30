@@ -57,6 +57,26 @@ Expect manual conflicts in the files the port rewrote or edited beyond the point
 
 Each scenario runs one skill headless against a throwaway repo with a planted stale-cache bug. The test then reads the transcripts of the parent, its subagents, and any foreign seat, and checks the port's plumbing and the skill's result. A full run takes 40 to 60 minutes at four parallel jobs and spends real tokens on Opus and `gpt-6-astra`. Passing runs are deleted along with their sessions. Failing runs stay in the output directory for inspection. Once you are done with them, delete their sessions and folders.
 
+## CI
+
+Two workflows run on GitHub.
+
+- **`pstack-ci.yml`** runs on every push to `claude-codex`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
+- **`pstack-upstream-sync.yml`** runs daily and on demand. It runs `port/sync-upstream.sh`, which merges cursor/plugins with `merge-upstream.py`. When the script resolves everything, it opens or updates a pull request from the `upstream-sync` branch, labels it `needs-porting` if upstream added something to port, and starts CI on it. When conflicts need a person, it opens or updates an issue labeled `upstream-sync` instead.
+
+`check.py` fails when a skill folder is not installed, a skill's name does not match its folder, a user-only skill lacks its Codex policy file, a skill that uses Cursor terms lacks the pointer, `pstack-harness` stops mapping a Cursor term a skill uses, a relative reference or README link is broken, or the README catalog drifts from the installed skills. It warns about Cursor mentions that no known term covers.
+
+Run the same checks locally:
+
+```sh
+python3 pstack/port/check.py
+python3 -m unittest discover -s pstack/port/tests -p 'test_*.py'
+pstack/port/tests/install_test.sh            # add /bin/bash to test macOS's stock bash
+DRY_RUN=1 pstack/port/sync-upstream.sh       # prints pushes and GitHub writes instead of making them
+```
+
+The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks).
+
 ## Uninstall
 
 ```sh

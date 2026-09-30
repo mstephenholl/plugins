@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Runs install.sh against a throwaway HOME and checks what it links, that a
+# rerun changes nothing, that a models file yields effort agents, and that
+# --uninstall removes all of it. Pass a bash binary to test a specific one:
+#   install_test.sh [/bin/bash]
+set -euo pipefail
+
+shell=${1:-bash}
+port="$(cd "$(dirname "$0")/.." && pwd)"
+home=$(mktemp -d)
+trap 'rm -rf "$home"' EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+count_list() {
+  sed -n "/^$1=(/,/^)/p" "$port/install.sh" | grep -cE '^  [a-z]'
+}
+
+links_in() {
+  find "$1" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' '
+}
+
+skills=$(($(count_list SKILLS) + $(count_list TEAM_KIT_SKILLS)))
+agents=$(count_list AGENTS)
+
+HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "install exited nonzero"
+[[ $(links_in "$home/.claude/skills") == "$skills" ]] || fail "expected $skills Claude Code skill links, got $(links_in "$home/.claude/skills")"
+[[ $(links_in "$home/.codex/skills") == "$skills" ]] || fail "expected $skills Codex skill links, got $(links_in "$home/.codex/skills")"
+[[ $(links_in "$home/.claude/agents") == "$agents" ]] || fail "expected $agents agent links"
+[[ -L $home/.agents/pstack ]] || fail "the .agents/pstack link is missing"
+[[ -f $home/.claude/skills/how/SKILL.md ]] || fail "a skill link does not resolve"
+
+rerun=$(HOME=$home "$shell" "$port/install.sh")
+[[ -z $rerun ]] || fail "a rerun changed something: $rerun"
+
+printf 'swarm workers: claude:sonnet@high, codex:gpt-6.1-sol@high\n' >"$home/.agents/pstack-models.md"
+HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "install with a models file exited nonzero"
+[[ -f $home/.claude/agents/pstack-effort-high.md ]] || fail "no pstack-effort-high agent"
+grep -q '^effort: high$' "$home/.claude/agents/pstack-effort-high.md" || fail "the effort agent does not pin its effort"
+
+HOME=$home "$shell" "$port/install.sh" --uninstall >/dev/null || fail "uninstall exited nonzero"
+left=$(find "$home/.claude" "$home/.codex" "$home/.agents" -type l | wc -l | tr -d ' ')
+[[ $left == 0 ]] || fail "$left links survived --uninstall"
+[[ ! -e $home/.claude/agents/pstack-effort-high.md ]] || fail "--uninstall left the effort agent"
+[[ -f $home/.agents/pstack-models.md ]] || fail "--uninstall removed the models file"
+
+# shellcheck disable=SC2016 # $BASH_VERSION must expand in the shell under test.
+echo "install test passed with bash $("$shell" -c 'echo $BASH_VERSION'): $skills skills, $agents agents"
