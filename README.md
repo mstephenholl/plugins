@@ -14,4 +14,4 @@ Then start any task that needs rigor with `/poteto-mode <task>` in Claude Code, 
 
 - [`pstack/README.md`](pstack/README.md) covers the `pstack` command, using the skills, models, and differences from Cursor's pstack.
 - [`pstack/port/README.md`](pstack/port/README.md) covers updating from upstream, porting a new skill, CI, releases, and the smoke test.
-- [`pstack/CHANGELOG.md`](pstack/CHANGELOG.md) lists the releases.
+- The [releases page](https://github.com/mstephenholl/pstack-claude-codex/releases) lists every release and what changed in it.

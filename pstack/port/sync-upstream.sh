@@ -81,8 +81,9 @@ if kind == "pr":
               "GitHub holds the pull request's own CI run because the Actions bot opened it. "
               "Approve that run to show the checks here, or read the dispatched run at the link."]
 else:
-    lines += ["", "To resolve, run `pstack/port/merge-upstream.py` in a clone of this branch, fix the files above, "
-              "commit the merge, and push. The next sync then opens a pull request for anything newer."]
+    lines += ["", "To resolve, create a branch from `main` and run `pstack/port/merge-upstream.py` on it. Fix the files above, "
+              "commit the merge, push the branch, and open a pull request. Merge it with a merge commit (`gh pr merge --merge`), "
+              "because a squash would drop upstream's history from `main`. The next sync then opens a pull request for anything newer."]
 print("\n".join(lines))
 PY
 }
