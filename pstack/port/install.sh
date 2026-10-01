@@ -2,8 +2,8 @@
 # Links the pstack skills that work outside Cursor into Claude Code and Codex.
 # Idempotent: re-run after pulling upstream or editing the lists below.
 # `install.sh --uninstall` removes every link and generated agent it made.
-# PSTACK_HARNESSES picks the harnesses to install into, "claude codex" by
-# default; links in a harness left out are removed. The `pstack` command
+# PSTACK_HARNESSES picks the harnesses to install into, "claude codex" when
+# unset; links in a harness left out are removed. The `pstack` command
 # (port/pstack) sets it from its saved choice.
 # Runs under macOS's stock bash 3.2, which treats an empty "${array[@]}" as
 # unbound under set -u, hence the ${array[@]+"${array[@]}"} expansions.
@@ -80,7 +80,7 @@ AGENTS=(
 pstack="$(cd -P "$(dirname "$0")/.." && pwd)"
 root="$(dirname "$pstack")"
 agent_target="$HOME/.claude/agents"
-harnesses=" ${PSTACK_HARNESSES:-claude codex} "
+harnesses=" ${PSTACK_HARNESSES-claude codex} "
 failed=0
 
 if [[ ${1:-} == --uninstall ]]; then
