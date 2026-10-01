@@ -535,6 +535,9 @@ def update_remote():
     return remote
 
 
+PLAIN_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+
+
 def version_key(tag):
     return [int(n) for n in re.findall(r"\d+", tag)]
 
@@ -554,6 +557,7 @@ def latest_release_tag(fetch=True, remote_check=False):
         if fetch:
             git("fetch", "--quiet", "--tags", remote)
         tags = git("tag", "--list", "v*").stdout.split()
+    tags = [t for t in tags if PLAIN_TAG.fullmatch(t)]
     return max(tags, key=version_key) if tags else None
 
 

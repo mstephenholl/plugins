@@ -243,6 +243,26 @@ class ReleaseTest(Env):
         self.assertEqual(os.path.realpath(os.path.join(self.home, "bin", "pstack")), os.path.join(managed, "pstack", "port", "pstack"))
         self.assertEqual(os.path.realpath(os.path.join(self.home, ".claude", "skills", "how")), os.path.join(managed, "pstack", "skills", "how"))
 
+    def tag_stray_names_on_the_tip(self):
+        for name in ("v0.9", "v1.0.0-rc.1"):
+            git(self.remote, "tag", name, "main")
+
+    def test_bootstrap_ignores_tags_that_are_not_plain_vX_Y_Z(self):
+        self.tag_stray_names_on_the_tip()
+        managed = os.path.join(self.home, ".local", "share", "pstack")
+        self.env.update(PSTACK_REPO=self.remote, PSTACK_HOME=managed)
+        subprocess.run(["bash", BOOTSTRAP], env=self.env, check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(git(managed, "describe", "--tags").strip(), "v0.2.0")
+
+    def test_bootstrap_without_any_plain_tag_follows_the_default_branch(self):
+        for name in ("v0.1.0", "v0.2.0"):
+            git(self.remote, "tag", "-d", name)
+        self.tag_stray_names_on_the_tip()
+        managed = os.path.join(self.home, ".local", "share", "pstack")
+        self.env.update(PSTACK_REPO=self.remote, PSTACK_HOME=managed)
+        subprocess.run(["bash", BOOTSTRAP], env=self.env, check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(git(managed, "rev-parse", "--abbrev-ref", "HEAD").strip(), "main")
+
     def test_bootstrap_refuses_a_home_inside_agents_skills(self):
         self.env.update(PSTACK_REPO=self.remote, PSTACK_HOME=os.path.join(self.home, ".agents", "skills", "pstack"))
         proc = subprocess.run(["bash", BOOTSTRAP], env=self.env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -258,6 +278,24 @@ class ReleaseTest(Env):
         self.assertIn("v0.1.0 -> v0.2.0", self.pstack("update", script=script).stdout)
         self.pstack("update", "--head", script=script)
         self.assertEqual(git(clone, "log", "-1", "--format=%s").strip(), "unreleased work")
+
+    def test_update_ignores_tags_that_are_not_plain_vX_Y_Z(self):
+        self.tag_stray_names_on_the_tip()
+        clone = os.path.join(self.tmp, "clone")
+        git(self.tmp, "clone", "-q", self.remote, clone)
+        git(clone, "checkout", "-q", "v0.1.0")
+        script = os.path.join(clone, "pstack", "port", "pstack")
+        self.pstack("install", script=script)
+        self.assertIn("v0.1.0 -> v0.2.0", self.pstack("update", script=script).stdout)
+
+    def test_doctor_does_not_offer_a_tag_that_is_not_plain_vX_Y_Z(self):
+        self.tag_stray_names_on_the_tip()
+        clone = os.path.join(self.tmp, "clone")
+        git(self.tmp, "clone", "-q", self.remote, clone)
+        git(clone, "checkout", "-q", "v0.2.0")
+        script = os.path.join(clone, "pstack", "port", "pstack")
+        self.pstack("install", script=script)
+        self.assertNotIn("is available", self.pstack("doctor", script=script).stdout)
 
     def test_update_with_no_harness_cli_links_nothing(self):
         clone = os.path.join(self.tmp, "clone")

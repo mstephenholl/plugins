@@ -38,7 +38,8 @@ else
   git clone --quiet "$repo" "$home"
 fi
 
-ref=${PSTACK_REF:-$(git -C "$home" tag --list 'v*' --sort=-version:refname | head -1)}
+plain_tag='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+ref=${PSTACK_REF:-$(git -C "$home" tag --list 'v*' --sort=-version:refname | sed -nE "/$plain_tag/p" | head -1)}
 if [[ -n $ref ]]; then
   git -C "$home" checkout --quiet "$ref"
 else
