@@ -361,7 +361,9 @@ class ApplyTest(ScriptCase):
         self.assertIn("--repo", proc.stderr)
 
     def test_the_repository_defaults_to_github_repository(self):
-        proc, calls = self.run_script("--dry-run", "--config", self.small_config(), GITHUB_REPOSITORY="env/repo")
+        proc, calls = self.run_script("--dry-run", "--config", self.small_config(), GITHUB_REPOSITORY="env/repo", replies={
+            "GET repos/env/repo/rulesets?per_page=100": [200, []],
+        })
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.splitlines()[0], 'dry run: PATCH repos/env/repo {"has_wiki": false}')
 
@@ -498,8 +500,8 @@ class CheckTest(ScriptCase):
         replies["GET repos/o/r/automated-security-fixes"] = [200, {"enabled": True, "paused": False}]
         proc, _ = self.check(replies)
         self.assertEqual(proc.stdout, (
-            "drift: private-vulnerability-reporting enabled: want true, have false\n"
             "drift: automated-security-fixes enabled: want false, have true\n"
+            "drift: private-vulnerability-reporting enabled: want true, have false\n"
             "checked o/r: 2 drift, 0 unreadable\n"
         ))
 

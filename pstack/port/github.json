@@ -7,7 +7,24 @@
     "merge_commit_message": "PR_BODY",
     "delete_branch_on_merge": true,
     "allow_update_branch": true,
-    "has_issues": true
+    "has_issues": true,
+    "has_wiki": false,
+    "has_projects": false,
+    "description": "Cursor's pstack skills ported to Claude Code and Codex, with an installer and the pstack command"
+  },
+  "endpoints": [
+    { "path": "topics", "method": "PUT", "body": { "names": ["agent-skills", "ai-agents", "claude-code", "codex", "pstack"] } },
+    { "path": "actions/permissions", "method": "PUT", "body": { "enabled": true, "allowed_actions": "selected", "sha_pinning_required": true } },
+    { "path": "actions/permissions/selected-actions", "method": "PUT", "body": { "github_owned_allowed": true, "verified_allowed": false, "patterns_allowed": ["oven-sh/setup-bun@*"] } },
+    { "path": "actions/permissions/workflow", "method": "PUT", "body": { "default_workflow_permissions": "read", "can_approve_pull_request_reviews": true } },
+    { "path": "actions/permissions/fork-pr-contributor-approval", "method": "PUT", "body": { "approval_policy": "all_external_contributors" } },
+    { "path": "code-scanning/default-setup", "method": "PATCH", "body": { "state": "configured", "languages": ["actions", "python"], "query_suite": "default" } }
+  ],
+  "features": {
+    "vulnerability-alerts": true,
+    "automated-security-fixes": false,
+    "private-vulnerability-reporting": true,
+    "immutable-releases": true
   },
   "rulesets": [
     {

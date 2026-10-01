@@ -72,13 +72,22 @@ Each scenario runs one skill headless against a throwaway repo with a planted st
 
 ## CI
 
-Three workflows run on GitHub.
+Four workflows run on GitHub.
 
 - **`pstack-ci.yml`** runs on every push to `main`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
   - The `CI gate` job passes only when every one of those jobs succeeded. It is the one check `main` requires, as Repository settings explains. It runs even when a job fails, because GitHub counts a skipped required check as passing.
   - On a push to `main`, the `Release` job runs after the gate and cuts the release. See Releases.
 - **`pstack-pr.yml`** runs when a pull request opens, reopens, gets a push, or has its title or body edited. Its one job, `Pull request title`, runs `port/release.py --check-pr` on the title, body, and number, which the workflow passes through `env` and never through the command line. It lists every problem the merge would cause: a title that is not Conventional Commits, a `Release-As` value that is not the next patch, minor, or major, and a `[skip ci]`-style marker that would stop the release. When the pull request passes, it prints the level the pull request asks for and the release it would join if merged now. It plans that release against the pull request's base commit, which the workflow passes as `--target`, so a `fix` that merges after an unreleased `feat` reads as a minor release. The check is advisory, so `main` does not require it. GitHub holds the `pull_request` run on a pull request that a bot opens, such as the upstream sync's, until a person approves it, and a required check would leave every sync pull request blocked until then.
 - **`pstack-upstream-sync.yml`** runs daily and on demand. It runs `port/sync-upstream.sh`, which merges cursor/plugins with `merge-upstream.py`. When the script resolves everything, it opens or updates a pull request from the `upstream-sync` branch, labels it `needs-porting` if upstream added something to port, and starts CI on it. When conflicts need a person, it opens or updates an issue labeled `upstream-sync` instead.
+- **`pstack-settings.yml`** runs daily at 09:41 UTC, on demand, and on a pull request that changes `port/github-settings.py` or the workflow. On a pull request it smoke-tests the checker against the live repository, and it does not compare that pull request's own `github.json`, because nothing has applied it yet. Its one job, `Settings match github.json`, runs `port/github-settings.py --check` and fails when the live repository differs from `github.json`. The Actions token is not an admin, so it can compare only what GitHub shows to any reader. That is the description, `has_issues`, `has_wiki`, and `has_projects`, the topics, private vulnerability reporting, and the rulesets except their bypass actors. GitHub requires Administration read for the merge settings, everything under Actions, code scanning, and the other features. The job lists those as unreadable and does not count them as drift, so a change to one of them in the web UI shows up only when an admin runs `--check`, or when the optional token below is set.
+
+To make the daily run see everything, create a fine-grained token scoped to this repository only, with read-only Administration and Metadata permissions, and store it as the `PSTACK_SETTINGS_TOKEN` repository secret. The workflow uses it in place of the Actions token. The token is optional, and without the secret the run falls back to the Actions token.
+
+Every `uses:` line in the workflows names a full commit SHA, with the release in a comment. A tag can move, and a commit cannot. The repository requires this, and a test fails when a workflow has an action that is not pinned or, outside `actions/` and `github/`, is not in `github.json`'s allowed patterns.
+
+Dependabot, set up in `.github/dependabot.yml`, opens one pull request a week that bumps the minor and patch updates of the pinned actions together, with their comments. The title reads `chore(deps): bump the actions group with N updates`, which is a patch release. Each major version bump arrives as its own pull request, so a breaking change to an action gets its own review. The file has no entry for `poteto-mode`'s `bun.lock`, because that lockfile is upstream's and a bump would conflict with the next sync. Dependabot alerts still watch the lockfile, but no pull request follows them.
+
+CodeQL default setup scans the workflows and the Python scripts. GitHub runs it, so no workflow file in this repository does, and `github.json` records its settings.
 
 `check.py` fails when a skill folder is not installed, a skill's name does not match its folder, a user-only skill lacks its Codex policy file, a skill that uses Cursor terms lacks the pointer, `pstack-harness` stops mapping a Cursor term a skill uses, a relative reference or README link is broken, or the README catalog drifts from the installed skills. It warns about Cursor mentions that no known term covers.
 
@@ -91,7 +100,7 @@ pstack/port/tests/install_test.sh            # add /bin/bash to test macOS's sto
 DRY_RUN=1 pstack/port/sync-upstream.sh       # from a clone whose origin is the fork; prints pushes and GitHub writes
 ```
 
-The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks, and set by `has_issues` in `github.json`).
+The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests" (`can_approve_pull_request_reviews` in `github.json`), and Issues enabled (also off on new forks, and set by `has_issues` in `github.json`).
 
 ## Releases
 
@@ -132,21 +141,36 @@ The bootstrap checks out the newest plain `vX.Y.Z` tag, and `pstack update` move
 
 ## Repository settings
 
-`port/github.json` records the repository settings and rulesets that releases and upstream syncs depend on. `port/github-settings.sh` applies them with `gh`.
+`port/github.json` records the repository settings, rulesets, and security features that releases and upstream syncs depend on. `port/github-settings.py` applies them with `gh` and checks the live repository against them. It needs Python 3.9 or newer and nothing else.
 
 ```sh
-GH_REPO=<owner>/<repo> pstack/port/github-settings.sh              # apply them
-DRY_RUN=1 GH_REPO=<owner>/<repo> pstack/port/github-settings.sh    # print each write instead of making it
+pstack/port/github-settings.py --repo <owner>/<repo>               # apply them
+pstack/port/github-settings.py --repo <owner>/<repo> --dry-run     # print each write instead of making it
+pstack/port/github-settings.py --repo <owner>/<repo> --check       # compare with the live repository and write nothing
+pstack/port/github-settings.py --repo <owner>/<repo> --config <path>   # read another settings file
 ```
 
-Run it as an account that administers the repository. It requires `GH_REPO`, so it never guesses which repository to change. It finds each ruleset by name and updates it in place, so running it again changes nothing. To change a setting, edit `github.json` and run the script.
+`--repo` defaults to `$GITHUB_REPOSITORY` and is required, so the script never guesses which repository to change. Apply as an account that administers the repository. The script applies the repository settings, then each endpoint, then each feature, then each ruleset. It finds each ruleset by name and updates it in place, so running it again changes nothing. To change a setting, merge the change to `github.json` first, then apply it as an admin, then run `--check` as an admin. The script refuses to require pinned actions while the default branch still has a `uses:` line that is not a full commit SHA. It names each file and line and writes nothing, so merge the pins before you apply.
+
+`--check` prints a `drift:` line for each difference and a summary line, and exits 1 when anything differs. A list of plain values, such as topics, compares as a set. A ruleset's rule parameters need only be a subset of the live ones, because GitHub adds defaults. GitHub hides some fields and endpoints from a token that is not admin, so for that token a 403, a 404, or a key missing from the response is unreadable and not drift. For an admin the same answers are drift, which catches a misspelled key or path. A 429 or a 5xx stops the check with exit code 2, because an outage says nothing about the repository. A live ruleset that `github.json` does not name is drift too. Run locally as an admin, `--check` sees everything. The daily `pstack settings` run sees only what its token can read and reports the rest in a notice.
+
+`github.json` covers these.
 
 - **Merge commits only.** A squashed or rebased upstream sync would drop cursor/plugins from the history of `main`, and every later sync would conflict on every file. For the same reason, `main` must not require linear history. The merge commit takes the pull request title and body, which is where `release.py` reads the title and any `Release-As:` or `BREAKING CHANGE:` line. Merge pull requests with `gh pr merge --merge`. The Shipping playbook of `poteto-mode` says `--squash`, which this repository rejects.
 - **A required `CI gate` check.** The `main` ruleset requires it from GitHub Actions, blocks direct pushes, force pushes, and deletion, and requires every review thread to be resolved. It requires no approvals, because one maintainer cannot approve their own pull request. No ruleset has bypass actors, but an admin can still disable a ruleset.
 - **`v*` tags cannot move or be deleted.** Users' clones already hold them. The ruleset leaves creation open, since the `Release` job creates the tags. `pstack update` and the bootstrap ignore names that are not plain `vX.Y.Z`, so a stray tag never reaches a clone as a release. A plain tag that users already fetched stays in their clones even after you delete it.
 - **Branches are deleted after a merge**, and a pull request offers to merge `main` into its branch. That is how an open sync pull request picks up a new `CI gate` job.
+- **No wiki and no projects.** Documentation lives in this repository, where a pull request reviews it, and a wiki would be a second copy that no pull request reviews.
+- **A description and topics.** They are how people find the repository, so the file holds them and a change in the web UI shows up as drift.
+- **Only selected actions, pinned by SHA.** GitHub-owned actions and `oven-sh/setup-bun@*` may run, and a workflow whose `uses:` line is not a full commit SHA is rejected. A moved tag would otherwise run new code in a job that holds a token. A new third-party action needs a pattern in `patterns_allowed` first.
+- **A read-only workflow token by default.** A job gets write access only where its workflow asks, as the `Release` job does for contents. Creating and approving pull requests stays allowed, because the upstream sync opens its pull request with that token.
+- **Approval for every outside contributor.** A workflow run from a fork waits for a maintainer, so an outsider cannot run code in CI uninvited.
+- **CodeQL default setup for `actions` and `python`.** It scans the workflows for script injection and the Python scripts for security flaws.
+- **Dependabot alerts on, security updates off.** Alerts watch `bun.lock`. A security update would open a pull request that edits upstream's lockfile and conflicts with the next sync.
+- **Private vulnerability reporting on.** The **Report a vulnerability** button that `.github/SECURITY.md` points to needs it.
+- **Immutable releases on.** A published release keeps its tag and assets, which `pstack update` relies on, and a deleted release's tag name cannot be reused. Never delete a published release. If one goes out wrong, fix forward with the next merge. If a release is deleted anyway, keep its tag, so `release.py` keeps counting from it.
 
-To remove a tag pushed by mistake, an admin disables the `release tags` ruleset in the repository settings, deletes the release and the tag, and enables the ruleset again. `release.py` fails when the newest plain tag is not in the history of the commit it releases, and its error points here.
+To remove a tag pushed by mistake, an admin disables the `release tags` ruleset in the repository settings, deletes the tag, and enables the ruleset again. Immutable releases do not get in the way, because a tag pushed by hand has no release. `release.py` fails when the newest plain tag is not in the history of the commit it releases, and its error points here.
 
 `merge-upstream.py` deletes every path that its `KEEP` pattern does not match. `KEEP` covers `pstack/`, `README.md`, `.gitignore`, the team kit's license and three of its skills, `.github/workflows/pstack-*.yml`, `.github/dependabot.yml`, and `.github/SECURITY.md`. When upstream changes `README.md`, `pstack/README.md`, `.github/dependabot.yml`, or `.github/SECURITY.md`, the sync keeps our copy. A file anywhere else, such as `.github/CODEOWNERS`, disappears with the next upstream sync unless you widen `KEEP`.
 
