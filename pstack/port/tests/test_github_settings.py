@@ -1,5 +1,6 @@
 """github.json and github-settings.sh: the repository settings the release process depends on, and the script that applies them."""
 
+import glob
 import json
 import os
 import re
@@ -10,7 +11,8 @@ import unittest
 
 PORT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(PORT))
-CI = os.path.join(ROOT, ".github", "workflows", "pstack-ci.yml")
+WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
+CI = os.path.join(WORKFLOWS, "pstack-ci.yml")
 GITHUB_JSON = os.path.join(PORT, "github.json")
 GITHUB_SETTINGS = os.path.join(PORT, "github-settings.sh")
 SYNC = os.path.join(PORT, "sync-upstream.sh")
@@ -30,12 +32,46 @@ def rule_types(rs):
     return [rule["type"] for rule in rs["rules"]]
 
 
+USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)[ \t]*(?:#[ \t]*(.*?))?[ \t]*$", re.M)
+PINNED = re.compile(r"[^@\s]+@[0-9a-f]{40}")
+VERSION_COMMENT = re.compile(r"v\d+\.\d+\.\d+")
+
+
+def unpinned_uses(text):
+    return [m.group(0).strip() for m in USES.finditer(text) if not (PINNED.fullmatch(m.group(1)) and VERSION_COMMENT.fullmatch(m.group(2) or ""))]
+
+
 def gate_name():
     with open(CI) as f:
         return re.search(r"^  gate:\n(?:    .*\n)*?    name: (.+)$", f.read(), re.M).group(1)
 
 
 class RepositoryWiringTest(unittest.TestCase):
+    def test_every_action_is_pinned_to_a_commit_with_a_version_comment(self):
+        workflows = glob.glob(os.path.join(WORKFLOWS, "pstack-*.yml"))
+        self.assertTrue(workflows)
+        for path in workflows:
+            with open(path) as f:
+                self.assertEqual(unpinned_uses(f.read()), [], os.path.basename(path))
+
+    def test_a_tag_a_branch_or_a_missing_version_comment_is_unpinned(self):
+        sha = "11d5960a326750d5838078e36cf38b85af677262"
+        text = (
+            f"      - uses: actions/checkout@{sha} # v4.4.0\n"
+            "      - uses: actions/setup-python@v5\n"
+            "      - uses: oven-sh/setup-bun@main # v2.2.0\n"
+            f"        uses: actions/cache@{sha}\n"
+            f"      - uses: actions/cache@{sha[:39]} # v4.0.0\n"
+            "      - uses: ./local-action\n"
+        )
+        self.assertEqual(unpinned_uses(text), [
+            "- uses: actions/setup-python@v5",
+            "- uses: oven-sh/setup-bun@main # v2.2.0",
+            f"uses: actions/cache@{sha}",
+            f"- uses: actions/cache@{sha[:39]} # v4.0.0",
+            "- uses: ./local-action",
+        ])
+
     def test_main_requires_the_ci_gate_from_github_actions(self):
         required = next(r for r in ruleset("main")["rules"] if r["type"] == "required_status_checks")
         self.assertEqual(required["parameters"]["required_status_checks"], [{"context": gate_name(), "integration_id": ACTIONS_APP_ID}])
