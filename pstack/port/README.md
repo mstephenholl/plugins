@@ -86,7 +86,7 @@ The sync needs three repository settings: Actions enabled (GitHub disables them 
 2. Tag the commit `vX.Y.Z` and push the tag.
 3. `pstack-release.yml` reruns the checks and unit tests, then publishes a GitHub release with that section as its notes. It fails if the section is missing.
 
-`pstack update` and the bootstrap move to the newest `v*` tag, so merging an upstream sync pull request reaches users only when you cut a release.
+The bootstrap checks out the newest `v*` tag, and `pstack update` moves such a checkout to newer tags only. Merging an upstream sync pull request therefore reaches users only when you cut a release. A clone that tracks a branch, like a maintainer's, follows its branch instead.
 
 ## Uninstall
 

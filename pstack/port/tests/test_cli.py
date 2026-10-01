@@ -198,6 +198,15 @@ class ReleaseTest(Env):
         self.pstack("update", "--head", script=script)
         self.assertEqual(git(clone, "log", "-1", "--format=%s").strip(), "unreleased work")
 
+    def test_update_never_moves_a_branch_clone_back_to_an_older_release(self):
+        clone = os.path.join(self.tmp, "clone")
+        git(self.tmp, "clone", "-q", self.remote, clone)
+        script = os.path.join(clone, "pstack", "port", "pstack")
+        self.pstack("install", script=script)
+        self.pstack("update", script=script)
+        self.assertEqual(git(clone, "rev-parse", "--abbrev-ref", "HEAD").strip(), "main")
+        self.assertEqual(git(clone, "log", "-1", "--format=%s").strip(), "unreleased work")
+
 
 if __name__ == "__main__":
     unittest.main()

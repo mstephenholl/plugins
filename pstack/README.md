@@ -33,7 +33,7 @@ To install from a clone you manage yourself, clone the repository anywhere outsi
 | `pstack install [--claude] [--codex] [--claude-read-rules]` | Links the skills and agents, and puts `pstack` on your PATH. It remembers which harnesses you chose. |
 | `pstack configure` | Chooses models, the reasoning budget, and foreign seats. `--dry-run --json` previews without writing. |
 | `pstack doctor` | Checks links, agents, the models file against the models you have, and optional tools. |
-| `pstack update [--head]` | Moves to the newest release, or the branch tip with `--head`, then reinstalls and runs `doctor`. |
+| `pstack update [--head]` | Moves an install to the newest release, or fast-forwards a clone that tracks a branch, then reinstalls and runs `doctor`. `--head` switches a release install to the branch tip. |
 | `pstack uninstall [--purge]` | Removes every link and generated agent, and the `pstack` command. `--purge` also deletes the models file, and the clone if the bootstrap created it. |
 | `pstack status` | Shows the version, clone, harnesses, and models file. |
 
@@ -94,7 +94,7 @@ Claude Code's `Agent` tool cannot set reasoning effort per spawn, so `install.sh
 
 ## Update and uninstall
 
-`pstack update` moves to the newest release and reinstalls. `pstack uninstall` removes everything the install set up, and `--purge` also removes your models file and the managed clone. [`CHANGELOG.md`](CHANGELOG.md) lists the releases.
+`pstack update` moves to the newest release, or fast-forwards a clone that tracks a branch, and reinstalls. `pstack uninstall` removes everything the install set up, and `--purge` also removes your models file and the managed clone. [`CHANGELOG.md`](CHANGELOG.md) lists the releases.
 
 Maintainers pull upstream pstack changes with `pstack/port/merge-upstream.py`, which a daily workflow also runs. [`port/README.md`](port/README.md) covers that, porting a new skill, CI, releases, and the smoke test.
 

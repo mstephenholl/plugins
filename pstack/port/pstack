@@ -551,11 +551,14 @@ def cmd_update(args):
         fail(str(e))
     before = version()
     git("fetch", "--quiet", "--tags", remote)
-    tag = None if args.head else latest_release_tag(fetch=False)
+    # A clone on a branch follows its branch. A release checkout (detached at a
+    # tag) follows releases, and never moves to a tag older than what it has.
+    branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    tag = None if args.head or branch != "HEAD" else latest_release_tag(fetch=False)
     if tag:
-        proc = git("checkout", "--quiet", tag)
+        older = git("merge-base", "--is-ancestor", tag, "HEAD").returncode == 0
+        proc = git("checkout", "--quiet", tag) if not older else subprocess.CompletedProcess([], 0, "", "")
     else:
-        branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         if branch == "HEAD":
             default = git("symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD").stdout.strip().split("/", 1)[-1] or "main"
             git("checkout", "--quiet", default)
@@ -632,8 +635,8 @@ def main():
     p.add_argument("--offline", action="store_true", help="skip the check for a newer release")
     p.set_defaults(run=cmd_doctor)
 
-    p = sub.add_parser("update", help="move to the newest release and reinstall")
-    p.add_argument("--head", action="store_true", help="follow the branch tip instead of releases")
+    p = sub.add_parser("update", help="move to the newest release, or fast-forward a branch clone, and reinstall")
+    p.add_argument("--head", action="store_true", help="switch a release checkout to the branch tip")
     p.set_defaults(run=cmd_update)
 
     p = sub.add_parser("uninstall", help="remove every link, agent, and the pstack command")
