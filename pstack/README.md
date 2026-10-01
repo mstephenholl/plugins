@@ -94,7 +94,7 @@ Claude Code's `Agent` tool cannot set reasoning effort per spawn, so `install.sh
 
 ## Update and uninstall
 
-`pstack update` moves to the newest release, or fast-forwards a clone that tracks a branch, and reinstalls. `pstack uninstall` removes everything the install set up, and `--purge` also removes your models file and the managed clone. [`CHANGELOG.md`](CHANGELOG.md) lists the releases.
+`pstack update` moves to the newest release, or fast-forwards a clone that tracks a branch, and reinstalls. `pstack uninstall` removes everything the install set up, and `--purge` also removes your models file and the managed clone. The [releases page](https://github.com/mstephenholl/pstack-claude-codex/releases) lists them.
 
 Maintainers pull upstream pstack changes with `pstack/port/merge-upstream.py`, which a daily workflow also runs. [`port/README.md`](port/README.md) covers that, porting a new skill, CI, releases, and the smoke test.
 

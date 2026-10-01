@@ -57,3 +57,37 @@ jobs:
       - run: pstack/port/tests/install_test.sh ${{ matrix.shell }}
       - name: pstack command, bootstrap, and update
         run: python3 -m unittest pstack/port/tests/test_cli.py
+
+  gate:
+    name: CI gate
+    needs: [checks, bun, install]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do [[ $result == success ]] || exit 1; done
+
+  release:
+    name: Release
+    needs: gate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: pstack-release
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Release this commit unless a tag already covers it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 pstack/port/release.py --publish --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
