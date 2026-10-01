@@ -92,7 +92,7 @@ def save_state(state):
 
 def selected_harnesses(args=None):
     chosen = [h for h in HARNESSES if args is not None and getattr(args, h, False)]
-    return chosen or load_state().get("harnesses") or list(HARNESSES)
+    return chosen or load_state().get("harnesses") or [h for h, found in installed_clis().items() if found]
 
 
 def version():
@@ -103,33 +103,41 @@ def version():
 # --- model detection ----------------------------------------------------------
 
 
+def installed_clis():
+    fake = os.environ.get("PSTACK_DETECT_JSON")
+    if fake:
+        with open(fake) as f:
+            detected = json.load(f)
+        return {h: bool(detected.get(h, {}).get("cli")) for h in HARNESSES}
+    return {h: bool(shutil.which(h)) for h in HARNESSES}
+
+
 def detect():
     """Models each harness offers, and the efforts each supports. PSTACK_DETECT_JSON fakes it for tests."""
     fake = os.environ.get("PSTACK_DETECT_JSON")
     if fake:
         with open(fake) as f:
             return json.load(f)
+    clis = installed_clis()
     found = {}
-    claude = shutil.which("claude")
     efforts = EFFORTS
-    if claude:
-        help_text = run([claude, "--help"]).stdout
+    if clis["claude"]:
+        help_text = run(["claude", "--help"]).stdout
         m = re.search(r"--effort <level>.*?\(([a-z, ]+)\)", help_text, re.S)
         if m:
             efforts = [e.strip() for e in m.group(1).split(",")]
-    found["claude"] = {"cli": bool(claude), "models": {a: efforts for a in CLAUDE_ALIASES} if claude else {}}
-    codex = shutil.which("codex")
+    found["claude"] = {"cli": clis["claude"], "models": {a: efforts for a in CLAUDE_ALIASES} if clis["claude"] else {}}
     models = {}
-    if codex:
+    if clis["codex"]:
         try:
-            catalog = json.loads(run([codex, "debug", "models"]).stdout)
+            catalog = json.loads(run(["codex", "debug", "models"]).stdout)
             for m in catalog.get("models", catalog) if isinstance(catalog, dict) else catalog:
                 if isinstance(m, dict) and m.get("visibility") == "list":
                     levels = [x.get("effort") if isinstance(x, dict) else x for x in m.get("supported_reasoning_levels") or []]
                     models[m.get("slug")] = [lv for lv in levels if lv]
         except ValueError:
             pass
-    found["codex"] = {"cli": bool(codex), "models": models}
+    found["codex"] = {"cli": clis["codex"], "models": models}
     return found
 
 
@@ -259,6 +267,8 @@ def write_models_file(result, path=MODELS):
 
 def run_install(harnesses, uninstall=False, quiet=False):
     """Runs install.sh. quiet sends its progress to stderr, so JSON on stdout stays parseable."""
+    if not harnesses and not uninstall:
+        fail("neither claude nor codex is on your PATH. Install Claude Code or Codex, or pass --claude or --codex to install anyway.")
     env = {**os.environ, "PSTACK_HARNESSES": " ".join(harnesses), "PSTACK_MODELS": MODELS}
     cmd = [os.path.join(PORT, "install.sh")] + (["--uninstall"] if uninstall else [])
     proc = subprocess.run(cmd, env=env, stdout=sys.stderr if quiet else None)
@@ -409,7 +419,9 @@ def cmd_doctor(args):
         findings.append({"level": level, "message": message, "fix": fix})
 
     harnesses = selected_harnesses()
-    note("ok", f"pstack {version()} at {ROOT}, for {' and '.join(harnesses)}")
+    note("ok", f"pstack {version()} at {ROOT}" + (f", for {' and '.join(harnesses)}" if harnesses else ""))
+    if not harnesses:
+        note("error", "neither claude nor codex is installed", "install Claude Code or Codex, then run `pstack install`")
     if inside_agents_skills():
         note("error", "the clone is inside ~/.agents/skills, which Codex scans recursively", f"move it, for example to {MANAGED_HOME}, and run `pstack install`")
     if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
@@ -443,6 +455,9 @@ def cmd_doctor(args):
         missing = [a for a in listed["AGENTS"] if not os.path.isfile(os.path.join(agents_dir, f"{a}.md"))]
         if missing:
             note("error", f"Claude Code agents missing: {', '.join(missing)}", "run `pstack install`")
+    for harness in HARNESSES:
+        if harness not in harnesses and detected.get(harness, {}).get("cli"):
+            note("ok", f"{harness} is installed, but pstack is not set up for it; run `pstack install --claude --codex` to add it")
 
     config = read_models_file()
     if config is None:
@@ -602,7 +617,7 @@ def cmd_status(args):
     state = load_state()
     print(f"pstack {version()}")
     print(f"clone: {ROOT}")
-    print(f"harnesses: {', '.join(selected_harnesses())}" + ("" if state else " (not installed yet)"))
+    print(f"harnesses: {', '.join(selected_harnesses()) or 'none selected'}" + ("" if state else " (not installed yet)"))
     if config:
         print(f"models: {MODELS} (budget {config['budget'] or 'unrecorded'}, foreign seats {config['foreign_seats'] or 'on'})")
     else:
@@ -615,7 +630,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("install", help="link pstack's skills and agents into Claude Code and Codex")
-    p.add_argument("--claude", action="store_true", help="install for Claude Code (default: the saved choice, or both)")
+    p.add_argument("--claude", action="store_true", help="install for Claude Code (default: the saved choice, or the harness CLIs on your PATH)")
     p.add_argument("--codex", action="store_true", help="install for Codex")
     p.add_argument("--claude-read-rules", action="store_true", help="let Claude Code read pstack's files without asking, via ~/.claude/settings.json")
     p.set_defaults(run=cmd_install)

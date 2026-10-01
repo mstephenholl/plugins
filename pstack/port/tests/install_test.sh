@@ -45,6 +45,8 @@ PSTACK_HARNESSES=codex HOME=$home "$shell" "$port/install.sh" >/dev/null || fail
 [[ $(links_in "$home/.claude/skills") == 0 ]] || fail "a Codex-only install left Claude Code skill links"
 [[ $(links_in "$home/.claude/agents") == 0 ]] || fail "a Codex-only install left Claude Code agents"
 [[ $(links_in "$home/.codex/skills") == "$skills" ]] || fail "a Codex-only install dropped Codex skill links"
+PSTACK_HARNESSES="" HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "an install for no harnesses exited nonzero"
+[[ $(links_in "$home/.claude/skills") == 0 && $(links_in "$home/.codex/skills") == 0 ]] || fail "an empty PSTACK_HARNESSES still linked skills"
 HOME=$home "$shell" "$port/install.sh" >/dev/null || fail "reinstalling both harnesses exited nonzero"
 [[ $(links_in "$home/.claude/skills") == "$skills" ]] || fail "reinstalling both harnesses did not restore Claude Code"
 

@@ -30,7 +30,7 @@ To install from a clone you manage yourself, clone the repository anywhere outsi
 
 | Command | What it does |
 |---|---|
-| `pstack install [--claude] [--codex] [--claude-read-rules]` | Links the skills and agents, and puts `pstack` on your PATH. It remembers which harnesses you chose. |
+| `pstack install [--claude] [--codex] [--claude-read-rules]` | Links the skills and agents, and puts `pstack` on your PATH. It remembers which harnesses you chose. With no flags and no saved choice, it installs for the harnesses whose CLI is on your PATH. |
 | `pstack configure` | Chooses models, the reasoning budget, and foreign seats. `--dry-run --json` previews without writing. |
 | `pstack doctor` | Checks links, agents, the models file against the models you have, and optional tools. |
 | `pstack update [--head]` | Moves an install to the newest release, or fast-forwards a clone that tracks a branch, then reinstalls and runs `doctor`. `--head` switches a release install to the branch tip. |
