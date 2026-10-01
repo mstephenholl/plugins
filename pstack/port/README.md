@@ -42,12 +42,12 @@ pstack/port/merge-upstream.py
 
 The script fetches the cursor/plugins remote, merges its `main` without committing, and drops every path outside the port, which upstream's changes to other plugins would otherwise bring back. It restores our copy of the two READMEs, `.github/dependabot.yml`, and `.github/SECURITY.md`, whatever upstream changed in them. It resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
 
-After resolving, run `install.sh` and then the smoke test. Then commit the merge, push the branch, and open a pull request. Merge it with a merge commit, because a squash would drop upstream's history from `main`. Name the repository in `GH_REPO`, since the clone also has cursor/plugins as a remote.
+After resolving, run `install.sh` and then the smoke test. Then commit the merge, push the branch, and open a pull request. Merge it with a merge commit, because a squash would drop upstream's history from `main`. The title is `chore(upstream): merge cursor/plugins`, which passes the `pstack PR` check and is a patch release. Name the repository in `GH_REPO`, since the clone also has cursor/plugins as a remote.
 
 ```sh
-git commit -m "Merge upstream cursor/plugins"
+git commit -m "chore(upstream): merge cursor/plugins"
 git push -u origin upstream-merge
-GH_REPO=<owner>/<repo> gh pr create --fill
+GH_REPO=<owner>/<repo> gh pr create --title "chore(upstream): merge cursor/plugins" --fill
 GH_REPO=<owner>/<repo> gh pr merge --merge
 ```
 
@@ -72,11 +72,12 @@ Each scenario runs one skill headless against a throwaway repo with a planted st
 
 ## CI
 
-Two workflows run on GitHub.
+Three workflows run on GitHub.
 
 - **`pstack-ci.yml`** runs on every push to `main`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
   - The `CI gate` job passes only when every one of those jobs succeeded. It is the one check `main` requires, as Repository settings explains. It runs even when a job fails, because GitHub counts a skipped required check as passing.
   - On a push to `main`, the `Release` job runs after the gate and cuts the release. See Releases.
+- **`pstack-pr.yml`** runs when a pull request opens, reopens, gets a push, or has its title or body edited. Its one job, `Pull request title`, runs `port/release.py --check-pr` on the title, body, and number, which the workflow passes through `env` and never through the command line. It lists every problem the merge would cause: a title that is not Conventional Commits, a `Release-As` value that is not the next patch, minor, or major, and a `[skip ci]`-style marker that would stop the release. When the pull request passes, it prints the level the pull request asks for and the release it would join if merged now. It plans that release against the pull request's base commit, which the workflow passes as `--target`, so a `fix` that merges after an unreleased `feat` reads as a minor release. The check is advisory, so `main` does not require it. GitHub holds the `pull_request` run on a pull request that a bot opens, such as the upstream sync's, until a person approves it, and a required check would leave every sync pull request blocked until then.
 - **`pstack-upstream-sync.yml`** runs daily and on demand. It runs `port/sync-upstream.sh`, which merges cursor/plugins with `merge-upstream.py`. When the script resolves everything, it opens or updates a pull request from the `upstream-sync` branch, labels it `needs-porting` if upstream added something to port, and starts CI on it. When conflicts need a person, it opens or updates an issue labeled `upstream-sync` instead.
 
 `check.py` fails when a skill folder is not installed, a skill's name does not match its folder, a user-only skill lacks its Codex policy file, a skill that uses Cursor terms lacks the pointer, `pstack-harness` stops mapping a Cursor term a skill uses, a relative reference or README link is broken, or the README catalog drifts from the installed skills. It warns about Cursor mentions that no known term covers.
@@ -109,7 +110,7 @@ The script reads the first-parent history of `main` since the newest tag. Each c
 
 Titles follow Conventional Commits, and a title that does not is a patch. A `BREAKING CHANGE:` or `Release-As:` line inside a fenced code block is not read, so documenting one never triggers it. A tag cannot be moved or deleted once users have it, which is why `Release-As` accepts only the next version.
 
-The notes list the pull request titles under Breaking changes, Features, Fixes, and Other changes, so write each title as the line users read.
+The notes list the pull request titles under Breaking changes, Features, Fixes, and Other changes, so write each title as the line users read. The `pstack PR` check runs the same parser on a pull request's title and body before merge, so most mistakes show while the pull request is open.
 
 Preview a release with `pstack/port/release.py` on an up-to-date `main`. It prints the decision and the notes and publishes nothing. Add `--target <ref>` for another commit.
 
@@ -117,11 +118,13 @@ Preview a release with `pstack/port/release.py` on an up-to-date `main`. It prin
 git fetch --tags
 pstack/port/release.py                  # the release for HEAD, with its notes
 pstack/port/release.py --target <ref>   # the release for another commit
+PR_TITLE='feat: add a flag' PR_BODY='' PR_NUMBER=4 pstack/port/release.py --check-pr   # what a pull request would release after HEAD
+PR_TITLE='feat: add a flag' PR_BODY='' PR_NUMBER=4 pstack/port/release.py --check-pr --target <base>   # after another base commit
 ```
 
 On a feature branch the preview lists the branch's own commits, not the one merge commit that the pull request makes, so its version and notes can differ from the real release. Publishing needs `--publish`, which only the release job passes.
 
-A pull request body that contains `[skip ci]` skips CI on its merge commit, so no release runs for it. That change ships with the next merge.
+A pull request whose title or body contains `[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`, or a line `skip-checks: true` skips CI on its merge commit, so no release runs for it. That change ships with the next merge, and the `pstack PR` check fails the pull request first.
 
 Never push `v*` tags by hand. The release job skips a tag whose name is not plain `vX.Y.Z` and warns about it, and `pstack update` and the bootstrap ignore it.
 

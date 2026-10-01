@@ -107,9 +107,9 @@ merged)
   body pr >"$work/body.md"
   cat "$work/body.md"
   if [[ -n $open_pr ]]; then
-    write gh pr edit "$open_pr" --body-file "$work/body.md"
+    write gh pr edit "$open_pr" --title "chore(upstream): merge cursor/plugins" --body-file "$work/body.md"
   else
-    write gh pr create --base "$base" --head "$branch" --title "Merge upstream cursor/plugins" --body-file "$work/body.md"
+    write gh pr create --base "$base" --head "$branch" --title "chore(upstream): merge cursor/plugins" --body-file "$work/body.md"
   fi
   if [[ $(jq '.to_port | length' "$work/report.json") -gt 0 ]]; then
     write gh label create needs-porting --color d93f0b --description "Upstream changes that need porting" --force
