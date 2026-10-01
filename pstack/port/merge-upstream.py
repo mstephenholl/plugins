@@ -7,7 +7,8 @@
    main (or REF), or picks up a merge already in progress.
 2. Drops everything outside the port (the other plugins, and pstack's
    Cursor-only pieces), which upstream changes would otherwise bring back,
-   and keeps our two READMEs over upstream's.
+   and puts back our own copy of the two READMEs, the Dependabot config, and
+   the security policy, whatever upstream changed in them.
 3. Resolves each conflict where our only change to the file is the
    pstack-harness pointer line: it takes upstream's version and puts the
    pointer back under the title. Every other conflict is listed for a person.
@@ -32,9 +33,11 @@ import sys
 
 POINTER = re.compile(r"^Outside Cursor, first read `~/\.agents/pstack/skills/pstack-harness/SKILL\.md`.*$", re.M)
 # What the port keeps. Anything else upstream adds or changes is dropped on merge.
-KEEP = re.compile(r"^(README\.md|\.gitignore|pstack/|cursor-team-kit/(LICENSE|skills/(deslop|control-ui|control-cli)/)|\.github/workflows/pstack-[^/]+\.yml$)")
+KEEP_FILES = {"README.md", ".gitignore", "cursor-team-kit/LICENSE", ".github/dependabot.yml", ".github/SECURITY.md"}
+KEEP_DIRS = ("pstack/", "cursor-team-kit/skills/deslop/", "cursor-team-kit/skills/control-ui/", "cursor-team-kit/skills/control-cli/")
+KEEP_WORKFLOWS = re.compile(r"\.github/workflows/pstack-[^/]+\.yml")
 DROP = re.compile(r"^pstack/(\.cursor-plugin|assets|automations|docs|skills/make-bot-ui)/")
-OURS = {"README.md", "pstack/README.md"}
+OURS = {"README.md", "pstack/README.md", ".github/dependabot.yml", ".github/SECURITY.md"}
 
 CURSOR_TERMS = re.compile(
     r"\bTask\b|AskQuestion|\.cursor/|pstack-models\.mdc|grok-|gpt-5\.6|claude-opus-5-5-max|agent-transcripts"
@@ -62,14 +65,18 @@ def show(repo, spec):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def kept(path):
+    return (path in KEEP_FILES or path.startswith(KEEP_DIRS) or bool(KEEP_WORKFLOWS.fullmatch(path))) and not DROP.match(path)
+
+
 def prune_and_keep_ours(repo):
-    """Drop paths outside the port and keep our READMEs. Returns how many paths were dropped."""
+    """Drop paths outside the port and restore our copy of every OURS path. Returns how many paths were dropped."""
     dropped = 0
     for path in sorted(set(git(repo, "ls-files").splitlines())):
         if path in OURS:
-            git(repo, "checkout", "--ours", "--", path, check=False)
+            git(repo, "checkout", "HEAD", "--", path, check=False)
             git(repo, "add", "--", path)
-        elif not KEEP.match(path) or DROP.match(path):
+        elif not kept(path):
             git(repo, "rm", "-q", "-f", "--sparse", "--", path)
             dropped += 1
     return dropped

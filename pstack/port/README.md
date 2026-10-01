@@ -40,7 +40,7 @@ git switch -c upstream-merge origin/main
 pstack/port/merge-upstream.py
 ```
 
-The script fetches the cursor/plugins remote, merges its `main` without committing, and drops every path outside the port, which upstream's changes to other plugins would otherwise bring back. It keeps our two READMEs over upstream's. It resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
+The script fetches the cursor/plugins remote, merges its `main` without committing, and drops every path outside the port, which upstream's changes to other plugins would otherwise bring back. It restores our copy of the two READMEs, `.github/dependabot.yml`, and `.github/SECURITY.md`, whatever upstream changed in them. It resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
 
 After resolving, run `install.sh` and then the smoke test. Then commit the merge, push the branch, and open a pull request. Merge it with a merge commit, because a squash would drop upstream's history from `main`. Name the repository in `GH_REPO`, since the clone also has cursor/plugins as a remote.
 
@@ -145,7 +145,7 @@ Run it as an account that administers the repository. It requires `GH_REPO`, so 
 
 To remove a tag pushed by mistake, an admin disables the `release tags` ruleset in the repository settings, deletes the release and the tag, and enables the ruleset again. `release.py` fails when the newest plain tag is not in the history of the commit it releases, and its error points here.
 
-`merge-upstream.py` deletes every path that its `KEEP` pattern does not match. `KEEP` covers `pstack/`, `README.md`, `.gitignore`, the team kit's license and three of its skills, and `.github/workflows/pstack-*.yml`. A file anywhere else, such as `.github/dependabot.yml` or `.github/CODEOWNERS`, disappears with the next upstream sync unless you widen `KEEP`.
+`merge-upstream.py` deletes every path that its `KEEP` pattern does not match. `KEEP` covers `pstack/`, `README.md`, `.gitignore`, the team kit's license and three of its skills, `.github/workflows/pstack-*.yml`, `.github/dependabot.yml`, and `.github/SECURITY.md`. When upstream changes `README.md`, `pstack/README.md`, `.github/dependabot.yml`, or `.github/SECURITY.md`, the sync keeps our copy. A file anywhere else, such as `.github/CODEOWNERS`, disappears with the next upstream sync unless you widen `KEEP`.
 
 ## Uninstall
 
