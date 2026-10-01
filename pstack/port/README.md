@@ -31,15 +31,25 @@ In Codex, user-only skills appear in the `$` picker under the `pstack` namespace
 
 ## Update from upstream
 
+`main` takes changes only through pull requests, so merge upstream on a branch.
+
 ```sh
 cd ~/.agents/src/pstack
 git remote add upstream https://github.com/cursor/plugins.git   # once
+git switch -c upstream-merge origin/main
 pstack/port/merge-upstream.py
 ```
 
 The script fetches the cursor/plugins remote, merges its `main` without committing, and drops every path outside the port, which upstream's changes to other plugins would otherwise bring back. It keeps our two READMEs over upstream's. It resolves every conflict where our only change to a file is the pointer line: it takes upstream's text and restores the pointer. It lists every other conflict for you. It also reports new upstream skills with the Cursor terms they use, ported skills that upstream removed, and Cursor terms that upstream newly added to skills already ported. Those are what need porting.
 
-After resolving and committing, run `install.sh` and then the smoke test.
+After resolving, run `install.sh` and then the smoke test. Then commit the merge, push the branch, and open a pull request. Merge it with a merge commit, because a squash would drop upstream's history from `main`. Name the repository in `GH_REPO`, since the clone also has cursor/plugins as a remote.
+
+```sh
+git commit -m "Merge upstream cursor/plugins"
+git push -u origin upstream-merge
+GH_REPO=<owner>/<repo> gh pr create --fill
+GH_REPO=<owner>/<repo> gh pr merge --merge
+```
 
 Expect manual conflicts in the files the port rewrote or edited beyond the pointer: `setup-pstack`, `no-comments`, `poteto-mode` (frontmatter name), the `bug-fix` playbook, the three `reflect` reviewer prompts, `worktree-audit.sh`, and the two agent files.
 
@@ -65,7 +75,7 @@ Each scenario runs one skill headless against a throwaway repo with a planted st
 Two workflows run on GitHub.
 
 - **`pstack-ci.yml`** runs on every push to `main`, every pull request, and on demand. It runs `port/check.py`, the unit tests in `port/tests/`, `shellcheck`, `poteto-mode`'s bun tests, and `port/tests/install_test.sh` on Ubuntu and macOS, including macOS's stock bash 3.2.
-  - The `CI gate` job passes only when every one of those jobs succeeded. It is the one check to require on `main`. It runs even when a job fails, because GitHub counts a skipped required check as passing.
+  - The `CI gate` job passes only when every one of those jobs succeeded. It is the one check `main` requires, as Repository settings explains. It runs even when a job fails, because GitHub counts a skipped required check as passing.
   - On a push to `main`, the `Release` job runs after the gate and cuts the release. See Releases.
 - **`pstack-upstream-sync.yml`** runs daily and on demand. It runs `port/sync-upstream.sh`, which merges cursor/plugins with `merge-upstream.py`. When the script resolves everything, it opens or updates a pull request from the `upstream-sync` branch, labels it `needs-porting` if upstream added something to port, and starts CI on it. When conflicts need a person, it opens or updates an issue labeled `upstream-sync` instead.
 
@@ -80,7 +90,7 @@ pstack/port/tests/install_test.sh            # add /bin/bash to test macOS's sto
 DRY_RUN=1 pstack/port/sync-upstream.sh       # from a clone whose origin is the fork; prints pushes and GitHub writes
 ```
 
-The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks).
+The sync needs three repository settings: Actions enabled (GitHub disables them on new forks), "Allow GitHub Actions to create and approve pull requests", and Issues enabled (also off on new forks, and set by `has_issues` in `github.json`).
 
 ## Releases
 
@@ -116,6 +126,26 @@ A pull request body that contains `[skip ci]` skips CI on its merge commit, so n
 Never push `v*` tags by hand. The release job skips a tag whose name is not plain `vX.Y.Z` and warns about it, and `pstack update` and the bootstrap ignore it.
 
 The bootstrap checks out the newest plain `vX.Y.Z` tag, and `pstack update` moves such a checkout to newer tags only. Every merge to `main` therefore reaches users on their next update, including a merged upstream sync. A clone that tracks a branch, like a maintainer's, follows its branch instead.
+
+## Repository settings
+
+`port/github.json` records the repository settings and rulesets that releases and upstream syncs depend on. `port/github-settings.sh` applies them with `gh`.
+
+```sh
+GH_REPO=<owner>/<repo> pstack/port/github-settings.sh              # apply them
+DRY_RUN=1 GH_REPO=<owner>/<repo> pstack/port/github-settings.sh    # print each write instead of making it
+```
+
+Run it as an account that administers the repository. It requires `GH_REPO`, so it never guesses which repository to change. It finds each ruleset by name and updates it in place, so running it again changes nothing. To change a setting, edit `github.json` and run the script.
+
+- **Merge commits only.** A squashed or rebased upstream sync would drop cursor/plugins from the history of `main`, and every later sync would conflict on every file. For the same reason, `main` must not require linear history. The merge commit takes the pull request title and body, which is where `release.py` reads the title and any `Release-As:` or `BREAKING CHANGE:` line. Merge pull requests with `gh pr merge --merge`. The Shipping playbook of `poteto-mode` says `--squash`, which this repository rejects.
+- **A required `CI gate` check.** The `main` ruleset requires it from GitHub Actions, blocks direct pushes, force pushes, and deletion, and requires every review thread to be resolved. It requires no approvals, because one maintainer cannot approve their own pull request. No ruleset has bypass actors, but an admin can still disable a ruleset.
+- **`v*` tags cannot move or be deleted.** Users' clones already hold them. The ruleset leaves creation open, since the `Release` job creates the tags. `pstack update` and the bootstrap ignore names that are not plain `vX.Y.Z`, so a stray tag never reaches a clone as a release. A plain tag that users already fetched stays in their clones even after you delete it.
+- **Branches are deleted after a merge**, and a pull request offers to merge `main` into its branch. That is how an open sync pull request picks up a new `CI gate` job.
+
+To remove a tag pushed by mistake, an admin disables the `release tags` ruleset in the repository settings, deletes the release and the tag, and enables the ruleset again. `release.py` fails when the newest plain tag is not in the history of the commit it releases, and its error points here.
+
+`merge-upstream.py` deletes every path that its `KEEP` pattern does not match. `KEEP` covers `pstack/`, `README.md`, `.gitignore`, the team kit's license and three of its skills, and `.github/workflows/pstack-*.yml`. A file anywhere else, such as `.github/dependabot.yml` or `.github/CODEOWNERS`, disappears with the next upstream sync unless you widen `KEEP`.
 
 ## Uninstall
 
