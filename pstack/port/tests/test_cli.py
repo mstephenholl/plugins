@@ -58,6 +58,18 @@ class Env(unittest.TestCase):
         d = os.path.join(self.home, f".{harness}", "skills")
         return sorted(n for n in os.listdir(d) if os.path.islink(os.path.join(d, n))) if os.path.isdir(d) else []
 
+    def fake_installed(self, *harnesses):
+        detected = {h: DETECTED[h] if h in harnesses else {"cli": False, "models": {}} for h in DETECTED}
+        with open(self.env["PSTACK_DETECT_JSON"], "w") as f:
+            json.dump(detected, f)
+
+    def saved_harnesses(self):
+        with open(os.path.join(self.home, ".config", "pstack", "state.json")) as f:
+            return json.load(f)["harnesses"]
+
+    def symlinks_under_home(self):
+        return sorted(os.path.join(p, n) for p, dirs, files in os.walk(self.home) for n in dirs + files if os.path.islink(os.path.join(p, n)))
+
 
 class CliTest(Env):
     def test_install_links_skills_and_the_command(self):
@@ -74,6 +86,55 @@ class CliTest(Env):
         self.assertIn("poteto-mode", self.links("codex"))
         self.pstack("configure", "--budget", "large", "--foreign-seats", "off", "--yes")
         self.assertEqual(self.models_file()["interrogate reviewers"], "codex:gpt-6-astra@xhigh, codex:gpt-6.1-sol@medium")
+
+    def test_install_with_only_claude_installed_skips_codex(self):
+        self.fake_installed("claude")
+        self.assertIn("installed for claude.", self.pstack("install").stdout)
+        self.assertIn("poteto-mode", self.links("claude"))
+        self.assertEqual(self.links("codex"), [])
+        self.assertEqual(self.saved_harnesses(), ["claude"])
+        self.pstack("doctor", "--offline")
+
+    def test_install_with_only_codex_installed_skips_claude(self):
+        self.fake_installed("codex")
+        self.assertIn("installed for codex.", self.pstack("install").stdout)
+        self.assertIn("poteto-mode", self.links("codex"))
+        self.assertEqual(self.links("claude"), [])
+        self.assertEqual(self.saved_harnesses(), ["codex"])
+        self.pstack("doctor", "--offline")
+
+    def test_install_with_no_harness_cli_asks_for_one_and_links_nothing(self):
+        self.fake_installed()
+        proc = self.pstack("install", code=1)
+        self.assertIn("--claude", proc.stderr)
+        self.assertIn("--codex", proc.stderr)
+        self.assertEqual(self.symlinks_under_home(), [])
+
+    def test_install_with_a_flag_installs_without_the_cli(self):
+        self.fake_installed()
+        self.assertIn("installed for codex.", self.pstack("install", "--codex").stdout)
+        self.assertEqual(self.links("claude"), [])
+        self.assertIn("poteto-mode", self.links("codex"))
+
+    def test_saved_choice_wins_over_the_installed_clis(self):
+        self.pstack("install", "--claude")
+        self.assertEqual(self.links("codex"), [])
+        self.pstack("install")
+        self.assertEqual(self.saved_harnesses(), ["claude"])
+        self.assertEqual(self.links("codex"), [])
+
+    def test_doctor_notes_an_installed_cli_pstack_is_not_set_up_for(self):
+        self.fake_installed("claude")
+        self.pstack("install")
+        self.fake_installed("claude", "codex")
+        lines = [line for line in self.pstack("doctor", "--offline").stdout.splitlines() if "pstack install --claude --codex" in line]
+        self.assertEqual([line.split()[0] for line in lines], ["ok"])
+        self.assertIn("codex", lines[0])
+
+    def test_doctor_and_status_say_so_when_no_harness_is_selected(self):
+        self.fake_installed()
+        self.assertIn("neither claude nor codex is installed", self.pstack("doctor", "--offline", code=1).stdout)
+        self.assertIn("harnesses: none selected", self.pstack("status").stdout)
 
     def test_configure_applies_budget_foreign_seats_and_effort_limits(self):
         self.pstack("install")
@@ -197,6 +258,17 @@ class ReleaseTest(Env):
         self.assertIn("v0.1.0 -> v0.2.0", self.pstack("update", script=script).stdout)
         self.pstack("update", "--head", script=script)
         self.assertEqual(git(clone, "log", "-1", "--format=%s").strip(), "unreleased work")
+
+    def test_update_with_no_harness_cli_links_nothing(self):
+        clone = os.path.join(self.tmp, "clone")
+        git(self.tmp, "clone", "-q", self.remote, clone)
+        detected = {h: {"cli": False, "models": {}} for h in DETECTED}
+        with open(self.env["PSTACK_DETECT_JSON"], "w") as f:
+            json.dump(detected, f)
+        proc = self.pstack("update", script=os.path.join(clone, "pstack", "port", "pstack"), code=1)
+        self.assertIn("--claude", proc.stderr)
+        links = [os.path.join(p, n) for p, dirs, files in os.walk(self.home) for n in dirs + files if os.path.islink(os.path.join(p, n))]
+        self.assertEqual(links, [])
 
     def test_update_never_moves_a_branch_clone_back_to_an_older_release(self):
         clone = os.path.join(self.tmp, "clone")
