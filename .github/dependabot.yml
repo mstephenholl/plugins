@@ -1,0 +1,15 @@
+# No npm entry. pstack/skills/poteto-mode/scripts/bun.lock is upstream's file,
+# and a bump here would conflict with the next upstream sync.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]

@@ -2,6 +2,7 @@
 """Cut a pstack release from main: a vX.Y.Z tag and a GitHub release, created in one API call.
 
   release.py [--target REF] [--publish] [--repo OWNER/REPO]
+  release.py --check-pr [--target BASE]
 
 It reads main's first-parent history from the newest plain vX.Y.Z tag up to
 --target (default HEAD) and plans the next version from the pull requests
@@ -15,10 +16,22 @@ release job in pstack-ci.yml passes it. It requires --repo, which defaults to
 $GITHUB_REPOSITORY. It does nothing when the newest tag already covers
 --target.
 
+--check-pr reads a pull request from $PR_TITLE, $PR_BODY, and $PR_NUMBER, never
+from the command line, so a workflow passes untrusted text only through env.
+It reads the pull request the way the merge commit will, a subject of
+"<title> (#N)" and a body of <body>, and exits 1 and lists every problem the
+merge would cause: a title that is not Conventional Commits, a Release-As
+value that is not a successor of the newest plain tag, or a marker that makes
+GitHub skip CI, so that no release runs. When there are none, it prints the
+level the pull request asks for and the release it would join if merged now.
+--target is the base commit the pull request merges into, so that release also
+counts what the base has not released yet. The pstack PR workflow runs it.
+
 A v* tag that is not plain vX.Y.Z is skipped with a warning, because
 `pstack update` and the bootstrap ignore it too. The decision, any warnings,
 and the notes go to stdout and to $GITHUB_STEP_SUMMARY when set. Under GitHub
-Actions each warning is also an annotation on the run.
+Actions each warning is also an annotation on the run, with %, CR, and LF
+escaped as the runner requires.
 
 It reads the local tags, so fetch them first. Exits 0 on a release, a preview,
 or when there is nothing to release, and 1 on any error. Needs git, and gh to
@@ -44,6 +57,8 @@ BREAKING = re.compile(r"^BREAKING[ -]CHANGE:", re.M)
 # Git trailer keys are case-insensitive. BREAKING CHANGE is not, so prose that says it in lowercase stays prose.
 RELEASE_AS = re.compile(r"^Release-As:[ \t]*(\S.*?)[ \t]*$", re.M | re.I)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+PR_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "ci", "build", "style", "revert")
+SKIP_CI = re.compile(r"\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks:[ \t]*true[ \t]*$", re.M | re.I)
 
 
 class Level(IntEnum):
@@ -120,6 +135,13 @@ class Outcome(NamedTuple):
     notes: str | None
 
 
+class PrCheck(NamedTuple):
+    errors: tuple[str, ...]
+    change: Change
+    level: Level
+    release: Release
+
+
 class ReleaseError(Exception):
     pass
 
@@ -182,28 +204,52 @@ def title_level(change: Change, previous: Version) -> Level:
     return min(level, PRE_1_0_CEILING) if previous.major == 0 else level
 
 
+def successor_tags(previous: Version) -> str:
+    return ", ".join(v.tag for v in previous.successors())
+
+
 def release_as_levels(change: Change, successors: tuple[Version, ...]) -> tuple[list[Level], list[str]]:
-    levels, warnings = [], []
+    levels, rejected = [], []
     for value in change.release_as:
         try:
             levels.append(Level(successors.index(Version.parse(value))))
         except ValueError:
-            ref = f"#{change.pr}" if change.pr is not None else change.sha[:12]
-            warnings.append(f"{ref}: ignored Release-As {value}, which is not one of {', '.join(v.tag for v in successors)}")
-    return levels, warnings
+            rejected.append(value)
+    return levels, rejected
+
+
+def change_level(change: Change, previous: Version) -> tuple[Level, list[str]]:
+    asked, rejected = release_as_levels(change, previous.successors())
+    return (max(asked) if asked else title_level(change, previous)), rejected
 
 
 def plan_release(previous: Version, target: str, commits: Sequence[Commit]) -> Release | None:
     if not commits:
         return None
     changes = tuple(parse_change(c) for c in commits)
-    successors = previous.successors()
     levels, warnings = [], []
     for change in changes:
-        asked, ignored = release_as_levels(change, successors)
-        warnings += ignored
-        levels.append(max(asked) if asked else title_level(change, previous))
+        level, rejected = change_level(change, previous)
+        levels.append(level)
+        ref = f"#{change.pr}" if change.pr is not None else change.sha[:12]
+        warnings += (f"{ref}: ignored Release-As {value}, which is not one of {successor_tags(previous)}" for value in rejected)
     return Release(previous.bump(max(levels)), previous, target, changes, tuple(warnings))
+
+
+def check_pr(title: str, body: str, number: int, previous: Version, base: str, unreleased: Sequence[Commit]) -> PrCheck:
+    subject = f"{title} (#{number})"
+    merge = Commit("0" * 40, subject, body)
+    change = parse_change(merge)
+    level, rejected = change_level(change, previous)
+    errors = [f"Release-As {value} is not one of {successor_tags(previous)}" for value in rejected]
+    if change.type not in PR_TYPES:
+        errors.insert(0, f'title "{title}" is not Conventional Commits. Expected <type>[(<scope>)]: <description>, where type is one of {", ".join(PR_TYPES)}.')
+    message = "\n".join(f"{subject}\n{body}".splitlines())
+    markers = dict.fromkeys(match.group(0).lower() for match in SKIP_CI.finditer(message))
+    errors += (f'"{marker}" in the title or body would make the merge commit skip CI, so no release would run' for marker in markers)
+    release = plan_release(previous, base, [merge, *unreleased])
+    assert release, "the merge commit is itself a change to release"
+    return PrCheck(tuple(errors), change, level, release)
 
 
 def note_line(change: Change) -> str:
@@ -280,10 +326,18 @@ def publish(repo: str, release: Release, body: str) -> None:
         raise ReleaseError(f"gh could not create the release:\n{(proc.stderr or proc.stdout).strip()}")
 
 
+def commit_of(ref: str) -> str:
+    return git("rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+
+
+def counted(changes: int) -> str:
+    return f"{changes} change{'s' if changes != 1 else ''}"
+
+
 def cut(args: argparse.Namespace) -> Outcome:
     if args.publish and not args.repo:
         raise ReleaseError("--repo OWNER/REPO is required with --publish")
-    target = git("rev-parse", "--verify", f"{args.target}^{{commit}}").strip()
+    target = commit_of(args.target)
     tag, warnings = newest_tag()
     release = plan_release(tag.version, target, history(tag, target))
     if release is None:
@@ -292,30 +346,68 @@ def cut(args: argparse.Namespace) -> Outcome:
     body = notes(release, args.repo or "OWNER/REPO")
     if args.publish:
         publish(args.repo, release, body)
-    count = len(release.changes)
-    decision = f"{'released' if args.publish else 'would release'} {release.version.tag} at {target[:12]} after {tag.version.tag} ({count} change{'s' if count != 1 else ''})"
+    decision = f"{'released' if args.publish else 'would release'} {release.version.tag} at {target[:12]} after {tag.version.tag} ({counted(len(release.changes))})"
     return Outcome(decision, [*warnings, *release.warnings], body)
+
+
+def check_pr_from_env(base_ref: str) -> PrCheck:
+    title, number = os.environ.get("PR_TITLE"), os.environ.get("PR_NUMBER", "")
+    if title is None or not re.fullmatch(r"[0-9]+", number):
+        raise ReleaseError("--check-pr needs PR_TITLE and a numeric PR_NUMBER in the environment, and PR_BODY when the pull request has a body")
+    base = commit_of(base_ref)
+    tag, _ = newest_tag()
+    return check_pr(title, os.environ.get("PR_BODY", ""), int(number), tag.version, base, history(tag, base))
+
+
+def check_report(check: PrCheck) -> str:
+    if check.errors:
+        return "".join(f"error: {e}\n" for e in check.errors)
+    release = check.release
+    lines = [
+        f"this pull request asks for a {check.level.name.lower()} release",
+        f"merged now, it would release {release.version.tag} after {release.previous.tag} ({counted(len(release.changes))})",
+        f"notes section: {kind_of(check.change).heading}",
+        f"notes line: {note_line(check.change)}",
+    ]
+    if check.change.breaking:
+        lines.append("breaking: yes")
+    return "\n".join(lines) + "\n"
+
+
+def annotation(level: str, message: str) -> str:
+    escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return f"::{level} title=release.py::{escaped}"
+
+
+def emit(report: str, annotations: Sequence[str]) -> None:
+    print(report, end="")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for line in annotations:
+            print(line)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+            f.write(report)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--target", default="HEAD", help="the commit to release (default: HEAD)")
-    parser.add_argument("--publish", action="store_true", help="create the release (default: print what would be released)")
+    parser.add_argument("--target", default="HEAD", help="the commit to release, or with --check-pr the base the pull request merges into (default: HEAD)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--publish", action="store_true", help="create the release (default: print what would be released)")
+    mode.add_argument("--check-pr", action="store_true", help="check the pull request in $PR_TITLE, $PR_BODY, and $PR_NUMBER, and print the release it asks for")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"), help="OWNER/REPO to release in, required with --publish (default: $GITHUB_REPOSITORY)")
     args = parser.parse_args(argv)
     try:
+        if args.check_pr:
+            check = check_pr_from_env(args.target)
+            emit(check_report(check), [annotation("error", e) for e in check.errors])
+            return 1 if check.errors else 0
         outcome = cut(args)
     except ReleaseError as e:
         print(f"release.py: {e}", file=sys.stderr)
         return 1
     report = "\n".join([outcome.decision, *(f"warning: {w}" for w in outcome.warnings)]) + "\n" + (f"\n{outcome.notes}\n" if outcome.notes else "")
-    print(report, end="")
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        for warning in outcome.warnings:
-            print(f"::warning title=release.py::{warning}")
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
-            f.write(report)
+    emit(report, [annotation("warning", w) for w in outcome.warnings])
     return 0
 
 

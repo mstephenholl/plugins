@@ -1,0 +1,27 @@
+name: pstack settings
+
+on:
+  schedule:
+    - cron: "41 9 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - pstack/port/github-settings.py
+      - .github/workflows/pstack-settings.yml
+
+permissions:
+  contents: read
+
+jobs:
+  settings:
+    name: Settings match github.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Compare the repository with github.json
+        env:
+          GH_TOKEN: ${{ secrets.PSTACK_SETTINGS_TOKEN || github.token }}
+        run: python3 pstack/port/github-settings.py --check

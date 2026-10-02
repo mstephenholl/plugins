@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -17,6 +18,8 @@ PORT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(PORT))
 SCRIPT = os.path.join(PORT, "release.py")
 CI = os.path.join(ROOT, ".github", "workflows", "pstack-ci.yml")
+PR_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "pstack-pr.yml")
+SYNC = os.path.join(PORT, "sync-upstream.sh")
 spec = importlib.util.spec_from_file_location("release", SCRIPT)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
@@ -371,6 +374,12 @@ class PreviewTest(GitCase):
         _, out, _ = self.run_main("--repo", "o/r")
         self.assertIn("::warning title=release.py::#6: ignored Release-As 10.0.0, which is not one of v0.1.1, v0.2.0, v1.0.0\n", out)
 
+    def test_a_warning_annotation_escapes_a_percent_sign_in_a_tag_name(self):
+        os.environ["GITHUB_ACTIONS"] = "true"
+        self.git("tag", "v2%0A")
+        _, out, _ = self.run_main("--repo", "o/r")
+        self.assertIn("::warning title=release.py::skipped tag v2%250A, which is not plain vX.Y.Z. pstack update and the bootstrap ignore it too.\n", out)
+
     def test_no_annotation_is_printed_elsewhere(self):
         self.commit("fix: z (#6)\n\nRelease-As: 10.0.0")
         _, out, _ = self.run_main("--repo", "o/r")
@@ -509,6 +518,256 @@ class PublishTest(GitCase):
             code, _, err = self.run_main("--publish", "--repo", "o/r")
         self.assertEqual(code, 1)
         self.assertIn("gh", err)
+
+
+class CheckPrTest(GitCase):
+    TYPES = "feat, fix, docs, refactor, test, chore, perf, ci, build, style, revert"
+
+    def setUp(self):
+        super().setUp()
+        self.git("tag", "-a", "v0.2.0", "-m", "v0.2.0")
+        for name in ("PR_TITLE", "PR_BODY", "PR_NUMBER"):
+            os.environ.pop(name, None)
+
+    def check(self, title, body="", number=4, *args):
+        os.environ.update({"PR_TITLE": title, "PR_BODY": body, "PR_NUMBER": str(number)})
+        return self.run_main("--check-pr", *args)
+
+    def title_error(self, title):
+        return f'error: title "{title}" is not Conventional Commits. Expected <type>[(<scope>)]: <description>, where type is one of {self.TYPES}.\n'
+
+    def plan(self, level, version="v0.2.1", previous="v0.2.0", changes="1 change"):
+        return f"this pull request asks for a {level} release\nmerged now, it would release {version} after {previous} ({changes})\n"
+
+    def test_a_feat_asks_for_a_minor_release_against_the_newest_tag(self):
+        code, out, err = self.check("feat(cli): add a flag")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, self.plan("minor", "v0.3.0") + "notes section: Features\nnotes line: - **cli:** add a flag (#4)\n")
+
+    def test_every_listed_type_passes(self):
+        for kind in self.TYPES.split(", "):
+            with self.subTest(kind):
+                code, out, _ = self.check(f"{kind}: do the thing")
+                self.assertEqual(code, 0, out)
+
+    def test_a_fix_and_a_plain_conventional_title_ask_for_a_patch(self):
+        for title, section, line in (("fix(x): y", "Fixes", "- **x:** y (#9)"), ("docs: explain releases", "Other changes", "- explain releases (#9)")):
+            with self.subTest(title):
+                code, out, _ = self.check(title, number=9)
+                self.assertEqual((code, out), (0, self.plan("patch") + f"notes section: {section}\nnotes line: {line}\n"))
+
+    def test_a_title_that_is_not_conventional_fails_with_the_expected_form(self):
+        for title in ("Update the README", "wip: stuff", "feat:no space", "feat: ", "feat(): x", "Merge upstream cursor/plugins"):
+            with self.subTest(title):
+                code, out, err = self.check(title)
+                self.assertEqual((code, out, err), (1, self.title_error(title), ""))
+
+    def test_a_dependabot_title_passes_as_a_patch_under_other_changes(self):
+        code, out, _ = self.check("chore(deps): bump the actions group with 3 updates", number=11)
+        self.assertEqual((code, out), (0, self.plan("patch") + "notes section: Other changes\nnotes line: - **deps:** bump the actions group with 3 updates (#11)\n"))
+
+    def test_the_sync_title_passes_and_reads_as_an_upstream_note(self):
+        with open(SYNC) as f:
+            title = re.search(r'gh pr create .*--title "([^"]+)"', f.read()).group(1)
+        code, out, _ = self.check(title, number=5)
+        self.assertEqual((code, out), (0, self.plan("patch") + "notes section: Other changes\nnotes line: - **upstream:** merge cursor/plugins (#5)\n"))
+
+    def test_the_sync_keeps_its_title_when_it_updates_an_open_pull_request(self):
+        with open(SYNC) as f:
+            script = f.read()
+        created = re.search(r'gh pr create .*--title "([^"]+)"', script).group(1)
+        edited = re.search(r'gh pr edit "\$open_pr" .*--title "([^"]+)"', script).group(1)
+        self.assertEqual((created, edited), ("chore(upstream): merge cursor/plugins",) * 2)
+
+    def test_the_merge_is_planned_on_top_of_what_the_base_has_not_released(self):
+        self.commit("feat(cli): add a flag (#6)")
+        code, out, err = self.check("fix: x")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, self.plan("patch", "v0.3.0", changes="2 changes") + "notes section: Fixes\nnotes line: - x (#4)\n")
+
+    def test_target_is_the_base_commit_and_a_later_commit_is_not_planned(self):
+        base = self.head()
+        self.commit("feat(cli): add a flag (#6)")
+        code, out, _ = self.check("fix: x", "", 4, "--target", base)
+        self.assertEqual((code, out), (0, self.plan("patch") + "notes section: Fixes\nnotes line: - x (#4)\n"))
+
+    def test_a_base_the_newest_tag_already_covers_adds_nothing_to_the_plan(self):
+        code, out, _ = self.check("feat: x", "", 4, "--target", "HEAD~1")
+        self.assertEqual((code, out), (0, self.plan("minor", "v0.3.0") + "notes section: Features\nnotes line: - x (#4)\n"))
+
+    def test_a_valid_release_as_sets_the_level_it_names(self):
+        code, out, _ = self.check("docs: ready for 1.0", "Ready.\n\nRelease-As: 1.0.0\n")
+        self.assertEqual((code, out.splitlines()[:2]), (0, self.plan("major", "v1.0.0").splitlines()))
+
+    def test_a_pr_may_lower_its_own_level_with_release_as(self):
+        code, out, _ = self.check("feat: small", "Release-As: 0.2.1\n")
+        self.assertEqual((code, out.splitlines()[:2]), (0, self.plan("patch").splitlines()))
+
+    def test_a_release_as_that_is_not_a_successor_fails_without_the_word_ignored(self):
+        code, out, _ = self.check("fix: x", "Release-As: 9.9.9\n")
+        self.assertEqual((code, out), (1, "error: Release-As 9.9.9 is not one of v0.2.1, v0.3.0, v1.0.0\n"))
+
+    def test_a_fenced_release_as_is_ignored(self):
+        body = "Documents the footer.\n\n```\nRelease-As: 9.9.9\n```\n"
+        code, out, _ = self.check("docs: describe Release-As", body)
+        self.assertEqual((code, out.splitlines()[:2]), (0, self.plan("patch").splitlines()))
+
+    def test_a_breaking_marker_in_the_body_is_reported(self):
+        code, out, _ = self.check("refactor(cli): rename the command", "Renames it.\n\nBREAKING CHANGE: pstack now starts as pst.\n")
+        self.assertEqual((code, out), (0, self.plan("minor", "v0.3.0") + (
+            "notes section: Breaking changes\n"
+            "notes line: - **cli:** rename the command (#4)\n"
+            "breaking: yes\n"
+        )))
+
+    def test_every_skip_marker_fails_because_no_release_would_run(self):
+        for marker in ("[skip ci]", "[ci skip]", "[no ci]", "[skip actions]", "[actions skip]", "skip-checks: true"):
+            for text in (marker, marker.upper(), marker.title()):
+                with self.subTest(text):
+                    code, out, err = self.check("fix: x", f"Fixes x.\n\n{text}\n")
+                    self.assertEqual((code, err), (1, ""))
+                    self.assertEqual(out, f'error: "{text.lower()}" in the title or body would make the merge commit skip CI, so no release would run\n')
+
+    def test_a_skip_marker_in_the_title_fails_too(self):
+        code, out, _ = self.check("fix: x [skip ci]")
+        self.assertEqual((code, out), (1, 'error: "[skip ci]" in the title or body would make the merge commit skip CI, so no release would run\n'))
+
+    def test_a_skip_marker_inside_a_fence_still_fails(self):
+        code, out, _ = self.check("docs: x", "```\n[skip ci]\n```\n")
+        self.assertEqual(code, 1, out)
+
+    def test_skip_checks_must_be_a_whole_line_set_to_true(self):
+        for body in ("skip-checks: false\n", "mention skip-checks: true in prose\n", "skip-checks: truely\n"):
+            with self.subTest(body):
+                code, out, _ = self.check("fix: x", body)
+                self.assertEqual(code, 0, out)
+
+    def test_a_body_written_with_windows_line_endings_is_read_the_same(self):
+        code, out, _ = self.check("fix: x", "Fixes x.\r\n\r\nskip-checks: true\r\nRelease-As: 9.9.9\r\n")
+        self.assertEqual((code, out), (1, (
+            "error: Release-As 9.9.9 is not one of v0.2.1, v0.3.0, v1.0.0\n"
+            'error: "skip-checks: true" in the title or body would make the merge commit skip CI, so no release would run\n'
+        )))
+
+    def test_every_error_is_listed_in_order(self):
+        code, out, _ = self.check("Update the README", "Release-As: 3.0.0\n[no ci]\nskip-checks: true\n")
+        self.assertEqual((code, out), (1, self.title_error("Update the README") + (
+            "error: Release-As 3.0.0 is not one of v0.2.1, v0.3.0, v1.0.0\n"
+            'error: "[no ci]" in the title or body would make the merge commit skip CI, so no release would run\n'
+            'error: "skip-checks: true" in the title or body would make the merge commit skip CI, so no release would run\n'
+        )))
+
+    def test_the_levels_are_judged_against_the_newest_plain_tag(self):
+        self.git("tag", "-a", "v0.9.0", "-m", "v0.9.0", "HEAD~1")
+        self.git("tag", "v2")
+        _, out, _ = self.check("feat: x")
+        self.assertEqual(out.splitlines()[:2], self.plan("minor", "v0.10.0", "v0.9.0", "2 changes").splitlines())
+
+    def test_shell_metacharacters_in_every_value_pass_through_the_environment_untouched(self):
+        title = "fix(cli): handle `id` and $(touch pwned) in \"quotes\" & 'ticks'; echo $HOME | tee x > y"
+        body = "Release-As: 1.0.0 $(touch pwned)\n```\n$(touch pwned2)\n```\n"
+        os.environ.update({"PR_TITLE": title, "PR_BODY": body, "PR_NUMBER": "4"})
+        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr"], capture_output=True, text=True, cwd=self.repo)
+        self.assertEqual((proc.returncode, proc.stderr), (1, ""))
+        self.assertEqual(proc.stdout, "error: Release-As 1.0.0 $(touch pwned) is not one of v0.2.1, v0.3.0, v1.0.0\n")
+        os.environ["PR_BODY"] = "```\n$(touch pwned2)\n```\n"
+        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr"], capture_output=True, text=True, cwd=self.repo)
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        self.assertEqual(proc.stdout, self.plan("patch") + (
+            "notes section: Fixes\n"
+            "notes line: - **cli:** handle `id` and $(touch pwned) in \"quotes\" & 'ticks'; echo $HOME | tee x > y (#4)\n"
+        ))
+        self.assertEqual(os.listdir(self.repo), [".git"])
+
+    def test_the_text_comes_from_the_environment_and_never_from_argv(self):
+        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr", "fix: x"], capture_output=True, text=True, cwd=self.repo)
+        self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+        self.assertIn("unrecognized arguments: fix: x", proc.stderr)
+
+    def test_a_check_needs_the_title_and_number_but_not_a_body(self):
+        os.environ.update({"PR_NUMBER": "4"})
+        code, out, err = self.run_main("--check-pr")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("PR_TITLE", err)
+        os.environ.update({"PR_TITLE": "fix: x", "PR_NUMBER": "four"})
+        code, out, err = self.run_main("--check-pr")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("PR_NUMBER", err)
+        os.environ.update({"PR_NUMBER": "4"})
+        code, out, _ = self.run_main("--check-pr")
+        self.assertEqual((code, out.splitlines()[:2]), (0, self.plan("patch").splitlines()))
+
+    def test_a_check_cannot_publish(self):
+        self.install_gh('echo called > "$FAKE_GH_DIR/argv"; cat > "$FAKE_GH_DIR/stdin"\n')
+        os.environ.update({"PR_TITLE": "fix: x", "PR_NUMBER": "4"})
+        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr", "--publish", "--repo", "o/r"], capture_output=True, text=True, cwd=self.repo)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIsNone(self.gh_calls())
+
+    def test_a_check_needs_a_plain_tag(self):
+        self.git("tag", "-d", "v0.2.0")
+        self.git("tag", "-d", "v0.1.0")
+        code, out, err = self.check("fix: x")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("no plain vX.Y.Z tag", err)
+
+    def test_an_annotation_escapes_a_percent_sign_in_a_title(self):
+        os.environ["GITHUB_ACTIONS"] = "true"
+        code, out, _ = self.check("Update 50%0A done")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines()[-1], (
+            f"::error title=release.py::title \"Update 50%250A done\" is not Conventional Commits. Expected <type>[(<scope>)]: <description>, where type is one of {self.TYPES}."
+        ))
+
+    def test_errors_become_annotations_on_github_actions_and_go_to_the_step_summary(self):
+        summary = os.path.join(self.tmp, "summary.md")
+        os.environ["GITHUB_STEP_SUMMARY"] = summary
+        os.environ["GITHUB_ACTIONS"] = "true"
+        code, out, _ = self.check("Update the README", "[skip ci]\n")
+        self.assertEqual(code, 1)
+        reports = self.title_error("Update the README") + 'error: "[skip ci]" in the title or body would make the merge commit skip CI, so no release would run\n'
+        self.assertEqual(out, reports + "".join(f"::error title=release.py::{line[len('error: '):]}\n" for line in reports.splitlines()))
+        with open(summary) as f:
+            self.assertEqual(f.read(), reports)
+
+
+class AnnotationTest(unittest.TestCase):
+    def test_a_percent_sign_and_both_line_breaks_are_escaped(self):
+        self.assertEqual(release.annotation("warning", "a%b\r\nc\n%0A"), "::warning title=release.py::a%25b%0D%0Ac%0A%250A")
+
+    def test_a_plain_message_is_left_alone(self):
+        self.assertEqual(release.annotation("error", "#6: no change"), "::error title=release.py::#6: no change")
+
+
+class PrWorkflowTest(unittest.TestCase):
+    def setUp(self):
+        with open(PR_WORKFLOW) as f:
+            self.text = f.read()
+
+    def test_it_runs_on_every_change_to_a_pull_request_with_read_only_access(self):
+        self.assertRegex(self.text, re.compile(r"^name: pstack PR$", re.M))
+        self.assertRegex(self.text, re.compile(r"^on:\n  pull_request:\n    types: \[opened, edited, synchronize, reopened\]$", re.M))
+        self.assertRegex(self.text, re.compile(r"^permissions:\n  contents: read$", re.M))
+        self.assertEqual(self.text.count("permissions:"), 1)
+
+    def test_it_is_one_bounded_job_that_checks_out_the_tags_without_credentials(self):
+        self.assertEqual(re.findall(r"^  ([A-Za-z0-9_-]+):[ \t]*$", self.text.split("\njobs:\n", 1)[1], re.M), ["title"])
+        self.assertRegex(self.text, re.compile(r"^    name: Pull request title$", re.M))
+        self.assertRegex(self.text, re.compile(r"^    timeout-minutes: 5$", re.M))
+        self.assertRegex(self.text, re.compile(r"^          fetch-depth: 0$", re.M))
+        self.assertRegex(self.text, re.compile(r"^          persist-credentials: false$", re.M))
+
+    def test_the_title_body_and_base_reach_the_script_only_through_env(self):
+        self.assertRegex(self.text, re.compile(
+            r"^        env:\n"
+            r"          PR_TITLE: \$\{\{ github\.event\.pull_request\.title \}\}\n"
+            r"          PR_BODY: \$\{\{ github\.event\.pull_request\.body \}\}\n"
+            r"          PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}\n"
+            r"          BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n"
+            r'        run: python3 pstack/port/release\.py --check-pr --target "\$BASE_SHA"$', re.M))
+        for line in self.text.splitlines():
+            if line.lstrip().startswith("run:"):
+                self.assertNotIn("${{", line)
 
 
 def ci_jobs():
