@@ -57,6 +57,8 @@ jobs:
       - run: pstack/port/tests/install_test.sh ${{ matrix.shell }}
       - name: pstack command, bootstrap, and update
         run: python3 -m unittest pstack/port/tests/test_cli.py
+      - name: worktree-audit.sh with this runner's stat and date
+        run: python3 -m unittest pstack/port/tests/test_worktree_audit.py
 
   gate:
     name: CI gate
