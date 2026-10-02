@@ -32,6 +32,8 @@ transcripts=$(mktemp)
 	find "$HOME/.claude/projects" "$HOME/.codex/sessions" -name '*.jsonl' -mtime -5 2>/dev/null
 } > "$transcripts"
 now=$(date +%s)
+# GNU stat prints a file's mtime with -c; BSD stat uses -f, which on GNU reports the filesystem.
+if stat -c %Y / >/dev/null 2>&1; then mtime=(stat -c '%Y %n'); else mtime=(stat -f '%m %N'); fi
 
 printf "SIZE\tAGE\tMERGED\tDIRTY\tREMOTE\tPR\tLAST_CHAT\tBUCKET\tWORKTREE\n"
 
@@ -72,9 +74,9 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt;
 	if [ -s "$transcripts" ]; then
 		f=$(tr '\n' '\0' < "$transcripts" \
 			| xargs -0 rg -l -0 -e "${wt}/" -e "${wt}\"" 2>/dev/null \
-			| xargs -0 stat -f '%m %N' 2>/dev/null | sort -rn | head -1)
+			| xargs -0 "${mtime[@]}" 2>/dev/null | sort -rn | head -1)
 		if [ -n "$f" ]; then last_ts=$(echo "$f" | awk '{print $1}')
-			last=$(date -r "$last_ts" '+%Y-%m-%d' 2>/dev/null); fi
+			last=$(date -r "$last_ts" '+%Y-%m-%d' 2>/dev/null || date -d "@$last_ts" '+%Y-%m-%d'); fi
 	fi
 	recent=$([ "$last_ts" -gt 0 ] 2>/dev/null && [ $(( (now - last_ts) / 86400 )) -le 4 ] && echo yes || echo no)
 
