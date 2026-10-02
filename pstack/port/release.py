@@ -7,8 +7,10 @@
 It reads main's first-parent history from the newest plain vX.Y.Z tag up to
 --target (default HEAD) and plans the next version from the pull requests
 that history merged. Upstream commits that a sync brings in sit on a second
-parent, so they never count. Without --publish it prints the release it would
-cut and stops. The version rules are in the Releases section of
+parent, so they never count. When every file that changed in that range is under
+.github/, or none changed, it releases nothing, and --check-pr says the same of
+the pull request's merge ref, HEAD. Without --publish it prints the release it
+would cut and stops. The version rules are in the Releases section of
 pstack/port/README.md.
 
 --publish creates the release with `gh`, which also creates the tag. Only the
@@ -58,6 +60,8 @@ BREAKING = re.compile(r"^BREAKING[ -]CHANGE:", re.M)
 RELEASE_AS = re.compile(r"^Release-As:[ \t]*(\S.*?)[ \t]*$", re.M | re.I)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 PR_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "ci", "build", "style", "revert")
+# Users run the clone, never these paths, so a release that changes only them changes nothing for users.
+UNSHIPPED = (".github/",)
 SKIP_CI = re.compile(r"\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks:[ \t]*true[ \t]*$", re.M | re.I)
 
 
@@ -140,6 +144,7 @@ class PrCheck(NamedTuple):
     change: Change
     level: Level
     release: Release
+    unshipped: str | None
 
 
 class ReleaseError(Exception):
@@ -236,7 +241,15 @@ def plan_release(previous: Version, target: str, commits: Sequence[Commit]) -> R
     return Release(previous.bump(max(levels)), previous, target, changes, tuple(warnings))
 
 
-def check_pr(title: str, body: str, number: int, previous: Version, base: str, unreleased: Sequence[Commit]) -> PrCheck:
+def unshipped_reason(paths: Sequence[str]) -> str | None:
+    if not paths:
+        return "no files changed"
+    if all(path.startswith(UNSHIPPED) for path in paths):
+        return f"only {' and '.join(UNSHIPPED)} changed"
+    return None
+
+
+def check_pr(title: str, body: str, number: int, previous: Version, base: str, unreleased: Sequence[Commit], paths: Sequence[str]) -> PrCheck:
     subject = f"{title} (#{number})"
     merge = Commit("0" * 40, subject, body)
     change = parse_change(merge)
@@ -249,7 +262,7 @@ def check_pr(title: str, body: str, number: int, previous: Version, base: str, u
     errors += (f'"{marker}" in the title or body would make the merge commit skip CI, so no release would run' for marker in markers)
     release = plan_release(previous, base, [merge, *unreleased])
     assert release, "the merge commit is itself a change to release"
-    return PrCheck(tuple(errors), change, level, release)
+    return PrCheck(tuple(errors), change, level, release, unshipped_reason(paths))
 
 
 def note_line(change: Change) -> str:
@@ -313,6 +326,12 @@ def history(tag: Tag, target: str) -> list[Commit]:
     return [Commit(*record.strip("\n").split("\x1f")) for record in out.split("\x1e") if record.strip()]
 
 
+def changed_paths(tag: Tag, target: str) -> list[str]:
+    # Rename detection would list only the new path, which hides a shipped file moved under .github/.
+    out = git("diff", "--name-only", "--no-renames", "-z", tag.commit, target)
+    return [path for path in out.split("\0") if path]
+
+
 def publish(repo: str, release: Release, body: str) -> None:
     payload = {
         "tag_name": release.version.tag,
@@ -342,6 +361,8 @@ def cut(args: argparse.Namespace) -> Outcome:
     release = plan_release(tag.version, target, history(tag, target))
     if release is None:
         return Outcome(f"nothing to release: {target[:12]} is covered by {tag.version.tag}", warnings, None)
+    if reason := unshipped_reason(changed_paths(tag, target)):
+        return Outcome(f"nothing to release: {reason} since {tag.version.tag} ({counted(len(release.changes))} held for the next release)", warnings, None)
 
     body = notes(release, args.repo or "OWNER/REPO")
     if args.publish:
@@ -356,16 +377,21 @@ def check_pr_from_env(base_ref: str) -> PrCheck:
         raise ReleaseError("--check-pr needs PR_TITLE and a numeric PR_NUMBER in the environment, and PR_BODY when the pull request has a body")
     base = commit_of(base_ref)
     tag, _ = newest_tag()
-    return check_pr(title, os.environ.get("PR_BODY", ""), int(number), tag.version, base, history(tag, base))
+    return check_pr(title, os.environ.get("PR_BODY", ""), int(number), tag.version, base, history(tag, base), changed_paths(tag, "HEAD"))
 
 
 def check_report(check: PrCheck) -> str:
     if check.errors:
         return "".join(f"error: {e}\n" for e in check.errors)
     release = check.release
+    verdict = (
+        f"it would not release: {check.unshipped} since {release.previous.tag}"
+        if check.unshipped
+        else f"it would release {release.version.tag} after {release.previous.tag} ({counted(len(release.changes))})"
+    )
     lines = [
         f"this pull request asks for a {check.level.name.lower()} release",
-        f"merged now, it would release {release.version.tag} after {release.previous.tag} ({counted(len(release.changes))})",
+        f"merged now, {verdict}",
         f"notes section: {kind_of(check.change).heading}",
         f"notes line: {note_line(check.change)}",
     ]

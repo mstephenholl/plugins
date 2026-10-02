@@ -85,7 +85,7 @@ To make the daily run see everything, create a fine-grained token scoped to this
 
 Every `uses:` line in the workflows names a full commit SHA, with the release in a comment. A tag can move, and a commit cannot. The repository requires this, and a test fails when a workflow has an action that is not pinned or, outside `actions/` and `github/`, is not in `github.json`'s allowed patterns.
 
-Dependabot, set up in `.github/dependabot.yml`, opens one pull request a week that bumps the minor and patch updates of the pinned actions together, with their comments. The title reads `chore(deps): bump the actions group with N updates`, which is a patch release. Each major version bump arrives as its own pull request, so a breaking change to an action gets its own review. The file has no entry for `poteto-mode`'s `bun.lock`, because that lockfile is upstream's and a bump would conflict with the next sync. Dependabot alerts still watch the lockfile, but no pull request follows them.
+Dependabot, set up in `.github/dependabot.yml`, opens one pull request a week that bumps the minor and patch updates of the pinned actions together, with their comments. The title reads `chore(deps): bump the actions group with N updates`, which asks for a patch release. It changes only `.github/`, so it cuts no release by itself. Each major version bump arrives as its own pull request, so a breaking change to an action gets its own review. The file has no entry for `poteto-mode`'s `bun.lock`, because that lockfile is upstream's and a bump would conflict with the next sync. Dependabot alerts still watch the lockfile, but no pull request follows them.
 
 CodeQL default setup scans the workflows and the Python scripts. GitHub runs it, so no workflow file in this repository does, and `github.json` records its settings.
 
@@ -119,6 +119,8 @@ The script reads the first-parent history of `main` since the newest tag. Each c
 
 Titles follow Conventional Commits, and a title that does not is a patch. A `BREAKING CHANGE:` or `Release-As:` line inside a fenced code block is not read, so documenting one never triggers it. A tag cannot be moved or deleted once users have it, which is why `Release-As` accepts only the next version.
 
+The job also looks at the files that changed since the newest tag. When every one is under `.github/`, or none changed, it cuts no release, because users run the clone and never `.github/`. That covers Dependabot pin bumps, workflow edits, and an upstream sync that brings nothing into the port. Those merges stay in the range, so the next release counts them in its level and lists them in its notes. The job prints `nothing to release` with the number of changes it holds, and the `pstack PR` check says the pull request would not release.
+
 The notes list the pull request titles under Breaking changes, Features, Fixes, and Other changes, so write each title as the line users read. The `pstack PR` check runs the same parser on a pull request's title and body before merge, so most mistakes show while the pull request is open.
 
 Preview a release with `pstack/port/release.py` on an up-to-date `main`. It prints the decision and the notes and publishes nothing. Add `--target <ref>` for another commit.
@@ -137,7 +139,7 @@ A pull request whose title or body contains `[skip ci]`, `[ci skip]`, `[no ci]`,
 
 Never push `v*` tags by hand. The release job skips a tag whose name is not plain `vX.Y.Z` and warns about it, and `pstack update` and the bootstrap ignore it.
 
-The bootstrap checks out the newest plain `vX.Y.Z` tag, and `pstack update` moves such a checkout to newer tags only. Every merge to `main` therefore reaches users on their next update, including a merged upstream sync. A clone that tracks a branch, like a maintainer's, follows its branch instead.
+The bootstrap checks out the newest plain `vX.Y.Z` tag, and `pstack update` moves such a checkout to newer tags only. Every merge to `main` that cuts a release therefore reaches users on their next update, including a merged upstream sync. A clone that tracks a branch, like a maintainer's, follows its branch instead.
 
 ## Repository settings
 

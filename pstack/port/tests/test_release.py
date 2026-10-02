@@ -290,7 +290,13 @@ class GitCase(unittest.TestCase):
     def git(self, *args):
         return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
 
-    def commit(self, message):
+    def commit(self, message, paths=("pstack/change.txt",)):
+        for path in paths:
+            full = os.path.join(self.repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "a") as f:
+                f.write(message + "\n")
+            self.git("add", path)
         self.git("commit", "-q", "--allow-empty", "-m", message)
 
     def head(self):
@@ -461,6 +467,81 @@ class PreviewTest(GitCase):
         self.assertIn("no-such-ref", err)
 
 
+class UnshippedTest(GitCase):
+    def setUp(self):
+        super().setUp()
+        self.git("tag", "-a", "v0.2.0", "-m", "v0.2.0")
+        self.install_gh('printf \'%s\\n\' "$@" > "$FAKE_GH_DIR/argv"\ncat > "$FAKE_GH_DIR/stdin"\n')
+
+    def publish(self):
+        return self.run_main("--publish", "--repo", "o/r")
+
+    def test_a_commit_that_changes_only_github_releases_nothing(self):
+        self.commit("chore(deps): bump actions/checkout (#7)", [".github/workflows/x.yml"])
+        code, out, err = self.publish()
+        self.assertEqual((code, out, err), (0, "nothing to release: only .github/ changed since v0.2.0 (1 change held for the next release)\n", ""))
+        self.assertIsNone(self.gh_calls())
+
+    def test_every_commit_held_back_is_counted(self):
+        self.commit("chore(deps): bump actions/checkout (#7)", [".github/workflows/x.yml"])
+        self.commit("chore(deps): bump actions/setup-python (#8)", [".github/workflows/y.yml"])
+        _, out, _ = self.publish()
+        self.assertEqual(out, "nothing to release: only .github/ changed since v0.2.0 (2 changes held for the next release)\n")
+
+    def test_the_held_commits_join_the_next_release_notes_and_level(self):
+        self.commit("feat(ci): add a workflow (#7)", [".github/workflows/x.yml"])
+        self.commit("fix(pstack): y2 (#8)")
+        sha = self.head()
+        code, out, err = self.publish()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, (
+            f"released v0.3.0 at {sha[:12]} after v0.2.0 (2 changes)\n\n"
+            "## Features\n\n"
+            "- **ci:** add a workflow (#7)\n\n"
+            "## Fixes\n\n"
+            "- **pstack:** y2 (#8)\n\n"
+            "Update with `pstack update`. Full changes: https://github.com/o/r/compare/v0.2.0...v0.3.0\n"
+        ))
+        self.assertEqual(json.loads(self.gh_calls()[1])["tag_name"], "v0.3.0")
+
+    def test_a_commit_that_changes_a_shipped_file_beside_github_releases(self):
+        self.commit("fix: z (#7)", [".github/workflows/x.yml", "pstack/change.txt"])
+        code, out, _ = self.publish()
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("released v0.2.1 "), out)
+
+    def test_a_file_moved_into_github_has_still_left_the_clone(self):
+        os.makedirs(os.path.join(self.repo, ".github"))
+        self.git("mv", "pstack/change.txt", ".github/change.txt")
+        self.git("commit", "-q", "-m", "chore: move the file (#7)")
+        code, out, _ = self.publish()
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("released v0.2.1 "), out)
+
+    def test_a_merge_that_changes_no_files_releases_nothing(self):
+        self.git("checkout", "-q", "-b", "sync")
+        self.commit("feat(x): upstream change the port drops", ["outside-the-port.txt"])
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-s", "ours", "-m", "chore(upstream): merge cursor/plugins (#7)", "sync")
+        code, out, err = self.publish()
+        self.assertEqual((code, out, err), (0, "nothing to release: no files changed since v0.2.0 (1 change held for the next release)\n", ""))
+        self.assertIsNone(self.gh_calls())
+
+    def test_the_preview_says_the_same(self):
+        self.commit("chore(deps): bump actions/checkout (#7)", [".github/workflows/x.yml"])
+        code, out, err = self.run_main()
+        self.assertEqual((code, out, err), (0, "nothing to release: only .github/ changed since v0.2.0 (1 change held for the next release)\n", ""))
+
+    def test_a_skipped_tag_is_still_reported(self):
+        self.git("tag", "v2")
+        self.commit("chore(deps): bump actions/checkout (#7)", [".github/workflows/x.yml"])
+        _, out, _ = self.publish()
+        self.assertEqual(out, (
+            "nothing to release: only .github/ changed since v0.2.0 (1 change held for the next release)\n"
+            "warning: skipped tag v2, which is not plain vX.Y.Z. pstack update and the bootstrap ignore it too.\n"
+        ))
+
+
 class PublishTest(GitCase):
     def test_publish_creates_the_tag_and_release_in_one_call(self):
         self.install_gh('printf \'%s\\n\' "$@" > "$FAKE_GH_DIR/argv"\ncat > "$FAKE_GH_DIR/stdin"\n')
@@ -529,9 +610,20 @@ class CheckPrTest(GitCase):
         for name in ("PR_TITLE", "PR_BODY", "PR_NUMBER"):
             os.environ.pop(name, None)
 
-    def check(self, title, body="", number=4, *args):
+    @contextlib.contextmanager
+    def merge_ref(self, paths=("pstack/change.txt",)):
+        base = self.head()
+        self.git("checkout", "-q", "--detach")
+        self.commit("Merge the pull request", paths)
+        try:
+            yield base
+        finally:
+            self.git("checkout", "-q", "main")
+
+    def check(self, title, body="", number=4, *args, paths=("pstack/change.txt",)):
         os.environ.update({"PR_TITLE": title, "PR_BODY": body, "PR_NUMBER": str(number)})
-        return self.run_main("--check-pr", *args)
+        with self.merge_ref(paths) as base:
+            return self.run_main("--check-pr", "--target", base, *args)
 
     def title_error(self, title):
         return f'error: title "{title}" is not Conventional Commits. Expected <type>[(<scope>)]: <description>, where type is one of {self.TYPES}.\n'
@@ -592,7 +684,7 @@ class CheckPrTest(GitCase):
         self.assertEqual((code, out), (0, self.plan("patch") + "notes section: Fixes\nnotes line: - x (#4)\n"))
 
     def test_a_base_the_newest_tag_already_covers_adds_nothing_to_the_plan(self):
-        code, out, _ = self.check("feat: x", "", 4, "--target", "HEAD~1")
+        code, out, _ = self.check("feat: x", "", 4, "--target", self.git("rev-parse", "HEAD~1"))
         self.assertEqual((code, out), (0, self.plan("minor", "v0.3.0") + "notes section: Features\nnotes line: - x (#4)\n"))
 
     def test_a_valid_release_as_sets_the_level_it_names(self):
@@ -667,17 +759,18 @@ class CheckPrTest(GitCase):
         title = "fix(cli): handle `id` and $(touch pwned) in \"quotes\" & 'ticks'; echo $HOME | tee x > y"
         body = "Release-As: 1.0.0 $(touch pwned)\n```\n$(touch pwned2)\n```\n"
         os.environ.update({"PR_TITLE": title, "PR_BODY": body, "PR_NUMBER": "4"})
-        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr"], capture_output=True, text=True, cwd=self.repo)
-        self.assertEqual((proc.returncode, proc.stderr), (1, ""))
-        self.assertEqual(proc.stdout, "error: Release-As 1.0.0 $(touch pwned) is not one of v0.2.1, v0.3.0, v1.0.0\n")
-        os.environ["PR_BODY"] = "```\n$(touch pwned2)\n```\n"
-        proc = subprocess.run([sys.executable, SCRIPT, "--check-pr"], capture_output=True, text=True, cwd=self.repo)
-        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        with self.merge_ref() as base:
+            proc = subprocess.run([sys.executable, SCRIPT, "--check-pr", "--target", base], capture_output=True, text=True, cwd=self.repo)
+            self.assertEqual((proc.returncode, proc.stderr), (1, ""))
+            self.assertEqual(proc.stdout, "error: Release-As 1.0.0 $(touch pwned) is not one of v0.2.1, v0.3.0, v1.0.0\n")
+            os.environ["PR_BODY"] = "```\n$(touch pwned2)\n```\n"
+            proc = subprocess.run([sys.executable, SCRIPT, "--check-pr", "--target", base], capture_output=True, text=True, cwd=self.repo)
+            self.assertEqual((proc.returncode, proc.stderr), (0, ""))
         self.assertEqual(proc.stdout, self.plan("patch") + (
             "notes section: Fixes\n"
             "notes line: - **cli:** handle `id` and $(touch pwned) in \"quotes\" & 'ticks'; echo $HOME | tee x > y (#4)\n"
         ))
-        self.assertEqual(os.listdir(self.repo), [".git"])
+        self.assertEqual(sorted(os.listdir(self.repo)), [".git", "pstack"])
 
     def test_the_text_comes_from_the_environment_and_never_from_argv(self):
         proc = subprocess.run([sys.executable, SCRIPT, "--check-pr", "fix: x"], capture_output=True, text=True, cwd=self.repo)
@@ -694,8 +787,20 @@ class CheckPrTest(GitCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("PR_NUMBER", err)
         os.environ.update({"PR_NUMBER": "4"})
-        code, out, _ = self.run_main("--check-pr")
+        with self.merge_ref() as base:
+            code, out, _ = self.run_main("--check-pr", "--target", base)
         self.assertEqual((code, out.splitlines()[:2]), (0, self.plan("patch").splitlines()))
+
+    def test_a_pull_request_that_changes_only_github_would_not_release(self):
+        for paths, reason in (([".github/workflows/ci.yml"], "only .github/ changed"), ([], "no files changed")):
+            with self.subTest(reason):
+                code, out, err = self.check("chore(deps): bump actions", "", 7, paths=paths)
+                self.assertEqual((code, out, err), (0, (
+                    "this pull request asks for a patch release\n"
+                    f"merged now, it would not release: {reason} since v0.2.0\n"
+                    "notes section: Other changes\n"
+                    "notes line: - **deps:** bump actions (#7)\n"
+                ), ""))
 
     def test_a_check_cannot_publish(self):
         self.install_gh('echo called > "$FAKE_GH_DIR/argv"; cat > "$FAKE_GH_DIR/stdin"\n')
