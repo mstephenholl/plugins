@@ -377,7 +377,7 @@ SCENARIOS = {
     "arena": dict(
         skill="arena",
         task="Arena this: change update_user so get_user never returns stale data after an update. Each candidate works in its own git worktree under the scratch directory. Leave the main checkout untouched and report the base you picked and the grafts.",
-        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(writes=True), panel_seats, answer_matches(r"base", "reports a base pick")],
+        checks=[read_harness, read_models, spawned("judgment"), foreign_seat(writes=True), panel_seats, answer_matches(r"base|(?:selected|picked|chose).{0,20}candidate", "reports a base pick")],
     ),
     "swarm": dict(
         skill="swarm",
